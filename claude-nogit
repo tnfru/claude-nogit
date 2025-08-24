@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# safe-claude - Run Claude Code in a safe container without git access
-# Usage: safe-claude [options] [project-directory]
+# claude-nogit - Run Claude in a safe container without git access
+# Usage: claude-nogit [options] [project-directory]
 #   --full    Include node_modules/.venv (slower but complete)
 #   -h        Show help
 
@@ -18,11 +18,14 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         -h|--help)
-            echo "safe-claude - Run Claude Code in a safe container without git access"
-            echo "Usage: safe-claude [options] [project-directory]"
+            echo "claude-nogit - Run Claude Code in a safe container without git access"
+            echo "Usage: claude-nogit [options] [project-directory]"
+            echo ""
+            echo "Options:"
             echo "  --full    Include node_modules/.venv (slower but complete)"
             echo "  -h        Show help"
             echo ""
+            echo "If no directory is specified, uses current directory (.)"
             echo "By default excludes .git and large dependency dirs for speed"
             exit 0
             ;;

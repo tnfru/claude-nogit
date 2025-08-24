@@ -33,13 +33,16 @@ sudo ln -s $(pwd)/claude-nogit/claude-nogit /usr/local/bin/
 ## Usage
 
 ```bash
-# Current directory
+# Current directory (default)
 claude-nogit
 
 # Specific project
 claude-nogit /path/to/project
 
 # Include node_modules and .venv (default: excluded for speed)
+claude-nogit --full
+
+# Include dependencies for specific project
 claude-nogit --full /path/to/project
 ```
 
@@ -54,7 +57,7 @@ claude-nogit --full /path/to/project
 ## Example
 
 ```bash
-$ claude-nogit my-project/
+$ claude-nogit  # No argument - uses current directory
 === Safe Claude Code Runner ===
 Project: /home/user/my-project
 Safe workspace: /tmp/claude-workspace-12345
