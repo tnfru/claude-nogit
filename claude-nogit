@@ -9,6 +9,8 @@ set -e
 
 # Parse arguments
 FULL_COPY=false
+INTERACTIVE=false
+SHOW_DIFF=false
 PROJECT_DIR=""
 
 while [[ $# -gt 0 ]]; do
@@ -17,16 +19,27 @@ while [[ $# -gt 0 ]]; do
             FULL_COPY=true
             shift
             ;;
+        --interactive)
+            INTERACTIVE=true
+            shift
+            ;;
+        --show-diff)
+            SHOW_DIFF=true
+            shift
+            ;;
         -h|--help)
             echo "claude-nogit - Run Claude Code in a safe container without git access"
             echo "Usage: claude-nogit [options] [project-directory]"
             echo ""
             echo "Options:"
-            echo "  --full    Include node_modules/.venv (slower but complete)"
-            echo "  -h        Show help"
+            echo "  --full         Include node_modules/.venv (slower but complete)"
+            echo "  --interactive  Prompt before copying changes back (old behavior)"
+            echo "  --show-diff    Show diff review before auto-copying"
+            echo "  -h             Show help"
             echo ""
             echo "If no directory is specified, uses current directory (.)"
             echo "By default excludes .git and large dependency dirs for speed"
+            echo "Changes are automatically copied back unless --interactive is used"
             exit 0
             ;;
         *)
@@ -138,28 +151,39 @@ echo "Changes:"
 eval diff -qr "$PROJECT_DIR" "$SAFE_WORKSPACE" $DIFF_EXCLUDES | grep -v "Only in $PROJECT_DIR.*\.git" || true
 echo "(Files shown as 'Only in $PROJECT_DIR' were deleted)"
 
-echo
-echo -e "${YELLOW}Review changes with 'diff' command? (y/n)${NC}"
-read -p "> " -n 1 -r
-echo
-if [[ $REPLY =~ ^[Yy]$ ]]; then
-    eval diff -ur "$PROJECT_DIR" "$SAFE_WORKSPACE" $DIFF_EXCLUDES || true
+if [[ "$SHOW_DIFF" = true ]] || [[ "$INTERACTIVE" = true ]]; then
+    echo
+    echo -e "${YELLOW}Review changes with 'diff' command? (y/n)${NC}"
+    read -p "> " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        eval diff -ur "$PROJECT_DIR" "$SAFE_WORKSPACE" $DIFF_EXCLUDES || true
+    fi
 fi
 
-# Ask to sync back
-echo
-echo -e "${GREEN}Copy changes back to project? (y/n)${NC}"
-read -p "> " -n 1 -r
-echo
-if [[ $REPLY =~ ^[Yy]$ ]]; then
+# Sync back changes
+if [[ "$INTERACTIVE" = true ]]; then
+    echo
+    echo -e "${GREEN}Copy changes back to project? (y/n)${NC}"
+    read -p "> " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        eval rsync -av --delete $EXCLUDES \
+          "$SAFE_WORKSPACE/" "$PROJECT_DIR/"
+        echo -e "${GREEN}✓ Changes applied to project (including deletions)${NC}"
+        rm -rf "$SAFE_WORKSPACE"
+    else
+        echo -e "${YELLOW}Changes preserved in: $SAFE_WORKSPACE${NC}"
+        echo "To manually copy later:"
+        echo "  rsync -av --delete $SAFE_WORKSPACE/ $PROJECT_DIR/"
+        echo "Then delete with:"
+        echo "  rm -rf $SAFE_WORKSPACE"
+    fi
+else
+    echo
+    echo -e "${GREEN}Automatically copying changes back to project...${NC}"
     eval rsync -av --delete $EXCLUDES \
       "$SAFE_WORKSPACE/" "$PROJECT_DIR/"
     echo -e "${GREEN}✓ Changes applied to project (including deletions)${NC}"
     rm -rf "$SAFE_WORKSPACE"
-else
-    echo -e "${YELLOW}Changes preserved in: $SAFE_WORKSPACE${NC}"
-    echo "To manually copy later:"
-    echo "  rsync -av --delete $SAFE_WORKSPACE/ $PROJECT_DIR/"
-    echo "Then delete with:"
-    echo "  rm -rf $SAFE_WORKSPACE"
 fi

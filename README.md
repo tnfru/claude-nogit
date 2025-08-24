@@ -9,8 +9,8 @@
 ## Features
 
 - 🔒 **Git isolation** - `.git` folder never enters the container
-- 🔍 **Change review** - See diffs before applying changes back
-- 💾 **Selective sync** - Choose which changes to keep
+- ⚡ **Auto-sync** - Changes automatically copied back by default
+- 🔍 **Optional review** - Use `--show-diff` or `--interactive` for manual control
 - 🚀 **Auto-start** - Claude launches with `--dangerously-skip-permissions`
 - 🔑 **Persistent auth** - Credentials preserved between sessions
 
@@ -34,7 +34,7 @@ cp claude-nogit/claude-nogit ~/.local/bin/
 ## Usage
 
 ```bash
-# Current directory (default)
+# Current directory (default) - auto-syncs changes back
 claude-nogit
 
 # Specific project
@@ -43,8 +43,14 @@ claude-nogit /path/to/project
 # Include node_modules and .venv (default: excluded for speed)
 claude-nogit --full
 
-# Include dependencies for specific project
-claude-nogit --full /path/to/project
+# Show diff review before auto-copying
+claude-nogit --show-diff
+
+# Use old interactive prompts (ask before copying)
+claude-nogit --interactive
+
+# Combined options
+claude-nogit --full --show-diff /path/to/project
 ```
 
 ## How it works
@@ -53,7 +59,7 @@ claude-nogit --full /path/to/project
 2. **Mounts** the copy in Anthropic's official devcontainer
 3. **Runs** Claude with full permissions
 4. **Shows** changes after you exit
-5. **Syncs** approved changes back (including deletions)
+5. **Auto-syncs** changes back (or prompts if `--interactive`)
 
 ## Example
 
@@ -82,6 +88,20 @@ Changes:
 Files backend/api.py and /tmp/claude-workspace-12345/backend/api.py differ
 Only in /home/user/my-project/backend: deleted-file.js
 
+Automatically copying changes back to project...
+✓ Changes applied to project (including deletions)
+```
+
+### Interactive mode example:
+
+```bash
+$ claude-nogit --interactive
+[...same startup...]
+
+=== Reviewing Changes ===
+Changes:
+Files backend/api.py and /tmp/claude-workspace-12345/backend/api.py differ
+
 Review changes with 'diff' command? (y/n) > y
 [Shows unified diff]
 
@@ -103,6 +123,15 @@ Always excluded:
 
 To modify, edit the `EXCLUDES` variable in the script.
 
+## Options
+
+| Flag | Description |
+|------|-------------|
+| `--full` | Include `node_modules`, `.venv` (slower but complete) |
+| `--interactive` | Prompt before copying changes back (old behavior) |
+| `--show-diff` | Show diff review before auto-copying |
+| `-h` | Show help |
+
 ## FAQ
 
 **Why not just use Anthropic's devcontainer directly?**  
@@ -116,6 +145,9 @@ They're included so Claude can understand your project configuration.
 
 **Can I use git inside the container?**  
 No. The `.git` folder is completely excluded from the container.
+
+**Will my changes be lost if I exit unexpectedly?**  
+No. Changes are preserved in `/tmp/claude-workspace-*` until you manually clean up or reboot.
 
 ## Contributing
 
