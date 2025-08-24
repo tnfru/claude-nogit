@@ -1,0 +1,162 @@
+#!/bin/bash
+
+# safe-claude - Run Claude Code in a safe container without git access
+# Usage: safe-claude [options] [project-directory]
+#   --full    Include node_modules/.venv (slower but complete)
+#   -h        Show help
+
+set -e
+
+# Parse arguments
+FULL_COPY=false
+PROJECT_DIR=""
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --full)
+            FULL_COPY=true
+            shift
+            ;;
+        -h|--help)
+            echo "safe-claude - Run Claude Code in a safe container without git access"
+            echo "Usage: safe-claude [options] [project-directory]"
+            echo "  --full    Include node_modules/.venv (slower but complete)"
+            echo "  -h        Show help"
+            echo ""
+            echo "By default excludes .git and large dependency dirs for speed"
+            exit 0
+            ;;
+        *)
+            PROJECT_DIR="$1"
+            shift
+            ;;
+    esac
+done
+
+# Configuration
+PROJECT_DIR="${PROJECT_DIR:-.}"
+PROJECT_DIR="$(cd "$PROJECT_DIR" && pwd)"  # Convert to absolute path
+SAFE_WORKSPACE="/tmp/claude-workspace-$$"
+CONTAINER_IMAGE="claude-code-dev"
+
+# Colors
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+NC='\033[0m'
+
+# Validate project directory
+if [ ! -d "$PROJECT_DIR" ]; then
+    echo -e "${RED}Error: Directory '$PROJECT_DIR' does not exist${NC}"
+    exit 1
+fi
+
+echo -e "${GREEN}=== Safe Claude Code Runner ===${NC}"
+echo -e "Project: $PROJECT_DIR"
+echo -e "Safe workspace: $SAFE_WORKSPACE"
+echo
+
+# Build exclusion list
+EXCLUDES="--exclude='.git' --exclude='.git*'"
+
+if [ "$FULL_COPY" = false ]; then
+    echo -e "${YELLOW}Fast mode: Excluding large dependency directories${NC}"
+    EXCLUDES="$EXCLUDES --exclude='node_modules' --exclude='.venv' --exclude='__pycache__' --exclude='*.pyc'"
+else
+    echo -e "${YELLOW}Full mode: Including all dependencies (may be slow)${NC}"
+fi
+
+# Create clean copy
+echo -e "${YELLOW}Creating clean workspace...${NC}"
+eval rsync -av $EXCLUDES \
+  --exclude='.DS_Store' \
+  "$PROJECT_DIR/" "$SAFE_WORKSPACE/"
+
+# Claude config info
+echo -e "${GREEN}✓ Mounting Claude configuration and authentication${NC}"
+
+# Check if container image exists
+if ! docker image inspect "$CONTAINER_IMAGE" >/dev/null 2>&1; then
+    echo -e "${YELLOW}Building Claude Code container...${NC}"
+    if [ -f "$HOME/.claude/devcontainer/Dockerfile" ]; then
+        docker build -t "$CONTAINER_IMAGE" "$HOME/.claude/devcontainer/"
+    else
+        echo -e "${RED}Error: Cannot find Dockerfile. Please build claude-code-dev image first.${NC}"
+        exit 1
+    fi
+fi
+
+# Run container
+echo -e "${GREEN}Starting Claude container...${NC}"
+echo -e "${YELLOW}You're now in a safe environment. The .git folder is not accessible.${NC}"
+echo -e "${GREEN}Claude will auto-start with --dangerously-skip-permissions${NC}"
+echo
+
+# Build volume mounts
+VOLUME_MOUNTS="-v $SAFE_WORKSPACE:/workspace -v $HOME/.claude:/home/node/.claude"
+if [ -f "$HOME/.claude.json" ]; then
+    VOLUME_MOUNTS="$VOLUME_MOUNTS -v $HOME/.claude.json:/home/node/.claude.json"
+fi
+# Add temp directory for Claude's internal use (prevents .bak files in workspace)
+VOLUME_MOUNTS="$VOLUME_MOUNTS --tmpfs /tmp:rw,exec,size=100m"
+
+# Temporarily disable exit on error for docker run
+set +e
+docker run -it \
+  --rm \
+  --name claude-safe-$$ \
+  $VOLUME_MOUNTS \
+  -w /workspace \
+  --entrypoint claude \
+  "$CONTAINER_IMAGE" \
+  --dangerously-skip-permissions
+CONTAINER_EXIT_CODE=$?
+set -e
+
+# After container exits, check for changes
+echo
+echo -e "${YELLOW}=== Reviewing Changes ===${NC}"
+
+# Build diff exclusions
+DIFF_EXCLUDES="--exclude='.git' --exclude='.DS_Store'"
+if [ "$FULL_COPY" = false ]; then
+    DIFF_EXCLUDES="$DIFF_EXCLUDES --exclude='node_modules' --exclude='.venv' --exclude='__pycache__'"
+fi
+
+# Check if there are any changes
+if eval diff -qr "$PROJECT_DIR" "$SAFE_WORKSPACE" $DIFF_EXCLUDES >/dev/null 2>&1; then
+    echo -e "${GREEN}No changes were made${NC}"
+    rm -rf "$SAFE_WORKSPACE"
+    exit 0
+fi
+
+# Show detailed changes  
+echo "Changes:"
+eval diff -qr "$PROJECT_DIR" "$SAFE_WORKSPACE" $DIFF_EXCLUDES | grep -v "Only in $PROJECT_DIR.*\.git" || true
+echo "(Files shown as 'Only in $PROJECT_DIR' were deleted)"
+
+echo
+echo -e "${YELLOW}Review changes with 'diff' command? (y/n)${NC}"
+read -p "> " -n 1 -r
+echo
+if [[ $REPLY =~ ^[Yy]$ ]]; then
+    eval diff -ur "$PROJECT_DIR" "$SAFE_WORKSPACE" $DIFF_EXCLUDES || true
+fi
+
+# Ask to sync back
+echo
+echo -e "${GREEN}Copy changes back to project? (y/n)${NC}"
+read -p "> " -n 1 -r
+echo
+if [[ $REPLY =~ ^[Yy]$ ]]; then
+    eval rsync -av --delete $EXCLUDES \
+      "$SAFE_WORKSPACE/" "$PROJECT_DIR/"
+    echo -e "${GREEN}✓ Changes applied to project (including deletions)${NC}"
+    rm -rf "$SAFE_WORKSPACE"
+else
+    echo -e "${YELLOW}Changes preserved in: $SAFE_WORKSPACE${NC}"
+    echo "To manually copy later:"
+    echo "  rsync -av --delete $SAFE_WORKSPACE/ $PROJECT_DIR/"
+    echo "Then delete with:"
+    echo "  rm -rf $SAFE_WORKSPACE"
+fi
