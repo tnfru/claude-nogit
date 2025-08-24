@@ -22,7 +22,8 @@ curl -sSL https://raw.githubusercontent.com/tnfru/claude-nogit/main/install.sh |
 
 # Manual install
 git clone https://github.com/tnfru/claude-nogit.git
-sudo ln -s $(pwd)/claude-nogit/claude-nogit /usr/local/bin/
+cp claude-nogit/claude-nogit ~/.local/bin/
+# Or add to PATH: export PATH="$PATH:$(pwd)/claude-nogit"
 ```
 
 ### Prerequisites
