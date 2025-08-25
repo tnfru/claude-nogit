@@ -73,7 +73,7 @@ echo -e "Safe workspace: $SAFE_WORKSPACE"
 echo
 
 # Build exclusion list
-EXCLUDES="--exclude='.git' --exclude='.git*'"
+EXCLUDES="--exclude='.git/'"
 
 if [ "$FULL_COPY" = false ]; then
     echo -e "${YELLOW}Fast mode: Excluding large dependency directories${NC}"
