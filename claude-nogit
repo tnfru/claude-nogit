@@ -88,8 +88,51 @@ eval rsync -av $EXCLUDES \
   --exclude='.DS_Store' \
   "$PROJECT_DIR/" "$SAFE_WORKSPACE/"
 
+# Create isolated .claude directory for this project
+ISOLATED_CLAUDE="$SAFE_WORKSPACE/.claude-isolated"
+mkdir -p "$ISOLATED_CLAUDE"
+
+# Copy only necessary files from main .claude (auth, settings, etc.)
+if [ -f "$HOME/.claude/.credentials.json" ]; then
+    cp "$HOME/.claude/.credentials.json" "$ISOLATED_CLAUDE/"
+fi
+if [ -f "$HOME/.claude/settings.json" ]; then
+    cp "$HOME/.claude/settings.json" "$ISOLATED_CLAUDE/"
+fi
+if [ -f "$HOME/.claude/CLAUDE.md" ]; then
+    cp "$HOME/.claude/CLAUDE.md" "$ISOLATED_CLAUDE/"
+fi
+if [ -d "$HOME/.claude/devcontainer" ]; then
+    cp -r "$HOME/.claude/devcontainer" "$ISOLATED_CLAUDE/"
+fi
+if [ -d "$HOME/.claude/hooks" ]; then
+    cp -r "$HOME/.claude/hooks" "$ISOLATED_CLAUDE/"
+fi
+if [ -d "$HOME/.claude/agents" ]; then
+    cp -r "$HOME/.claude/agents" "$ISOLATED_CLAUDE/"
+fi
+if [ -d "$HOME/.claude/plugins" ]; then
+    cp -r "$HOME/.claude/plugins" "$ISOLATED_CLAUDE/"
+fi
+if [ -d "$HOME/.claude/statsig" ]; then
+    cp -r "$HOME/.claude/statsig" "$ISOLATED_CLAUDE/"
+fi
+
+# Create project-specific directories
+PROJECT_NAME=$(echo "$PROJECT_DIR" | sed 's|/|-|g')
+mkdir -p "$ISOLATED_CLAUDE/projects/$PROJECT_NAME"
+mkdir -p "$ISOLATED_CLAUDE/todos"
+mkdir -p "$ISOLATED_CLAUDE/shell-snapshots"
+mkdir -p "$ISOLATED_CLAUDE/sessions"
+
+# Copy existing project sessions if they exist
+if [ -d "$HOME/.claude/projects/$PROJECT_NAME" ]; then
+    cp -r "$HOME/.claude/projects/$PROJECT_NAME"/* "$ISOLATED_CLAUDE/projects/$PROJECT_NAME/" 2>/dev/null || true
+fi
+
 # Claude config info
-echo -e "${GREEN}✓ Mounting Claude configuration and authentication${NC}"
+echo -e "${GREEN}✓ Created isolated Claude configuration${NC}"
+echo -e "${GREEN}✓ Project-specific session storage enabled${NC}"
 
 # Check if container image exists
 if ! docker image inspect "$CONTAINER_IMAGE" >/dev/null 2>&1; then
@@ -109,7 +152,7 @@ echo -e "${GREEN}Claude will auto-start with --dangerously-skip-permissions${NC}
 echo
 
 # Build volume mounts
-VOLUME_MOUNTS="-v $SAFE_WORKSPACE:/workspace -v $HOME/.claude:/home/node/.claude"
+VOLUME_MOUNTS="-v $SAFE_WORKSPACE:/workspace -v $ISOLATED_CLAUDE:/home/node/.claude"
 if [ -f "$HOME/.claude.json" ]; then
     VOLUME_MOUNTS="$VOLUME_MOUNTS -v $HOME/.claude.json:/home/node/.claude.json"
 fi
@@ -129,12 +172,19 @@ docker run -it \
 CONTAINER_EXIT_CODE=$?
 set -e
 
+# After container exits, sync project sessions back to main .claude
+if [ -d "$ISOLATED_CLAUDE/projects/$PROJECT_NAME" ]; then
+    echo -e "${YELLOW}Saving project sessions...${NC}"
+    mkdir -p "$HOME/.claude/projects/$PROJECT_NAME"
+    cp -r "$ISOLATED_CLAUDE/projects/$PROJECT_NAME"/* "$HOME/.claude/projects/$PROJECT_NAME/" 2>/dev/null || true
+fi
+
 # After container exits, check for changes
 echo
 echo -e "${YELLOW}=== Reviewing Changes ===${NC}"
 
 # Build diff exclusions
-DIFF_EXCLUDES="--exclude='.git' --exclude='.DS_Store'"
+DIFF_EXCLUDES="--exclude='.git' --exclude='.DS_Store' --exclude='.claude-isolated'"
 if [ "$FULL_COPY" = false ]; then
     DIFF_EXCLUDES="$DIFF_EXCLUDES --exclude='node_modules' --exclude='.venv' --exclude='__pycache__'"
 fi
@@ -168,21 +218,21 @@ if [[ "$INTERACTIVE" = true ]]; then
     read -p "> " -n 1 -r
     echo
     if [[ $REPLY =~ ^[Yy]$ ]]; then
-        eval rsync -av --delete $EXCLUDES \
+        eval rsync -av --delete $EXCLUDES --exclude='.claude-isolated' \
           "$SAFE_WORKSPACE/" "$PROJECT_DIR/"
         echo -e "${GREEN}✓ Changes applied to project (including deletions)${NC}"
         rm -rf "$SAFE_WORKSPACE"
     else
         echo -e "${YELLOW}Changes preserved in: $SAFE_WORKSPACE${NC}"
         echo "To manually copy later:"
-        echo "  rsync -av --delete $SAFE_WORKSPACE/ $PROJECT_DIR/"
+        echo "  rsync -av --delete --exclude='.claude-isolated' $SAFE_WORKSPACE/ $PROJECT_DIR/"
         echo "Then delete with:"
         echo "  rm -rf $SAFE_WORKSPACE"
     fi
 else
     echo
     echo -e "${GREEN}Automatically copying changes back to project...${NC}"
-    eval rsync -av --delete $EXCLUDES \
+    eval rsync -av --delete $EXCLUDES --exclude='.claude-isolated' \
       "$SAFE_WORKSPACE/" "$PROJECT_DIR/"
     echo -e "${GREEN}✓ Changes applied to project (including deletions)${NC}"
     rm -rf "$SAFE_WORKSPACE"
