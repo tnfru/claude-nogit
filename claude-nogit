@@ -67,6 +67,38 @@ if [ ! -d "$PROJECT_DIR" ]; then
     exit 1
 fi
 
+# Cleanup function for proper signal handling
+cleanup() {
+    local exit_code=$?
+    
+    # If container is still running, stop it
+    if docker ps -q --filter "name=claude-safe-$$" >/dev/null 2>&1; then
+        echo -e "\n${YELLOW}Stopping container...${NC}"
+        docker stop claude-safe-$$ >/dev/null 2>&1 || true
+    fi
+    
+    # Sync project sessions back to main .claude
+    if [ -d "$ISOLATED_CLAUDE/projects/$PROJECT_NAME" ] && [ "$(ls -A "$ISOLATED_CLAUDE/projects/$PROJECT_NAME" 2>/dev/null)" ]; then
+        echo -e "${YELLOW}Saving project sessions...${NC}"
+        mkdir -p "$HOME/.claude/projects/$PROJECT_NAME"
+        cp -r "$ISOLATED_CLAUDE/projects/$PROJECT_NAME"/. "$HOME/.claude/projects/$PROJECT_NAME/" 2>/dev/null || true
+    fi
+    
+    # Clean up temporary directories
+    if [ -n "$SAFE_WORKSPACE" ] && [ -d "$SAFE_WORKSPACE" ]; then
+        rm -rf "$SAFE_WORKSPACE" 2>/dev/null || true
+    fi
+    
+    if [ -n "$ISOLATED_CLAUDE" ] && [ -d "$ISOLATED_CLAUDE" ]; then
+        rm -rf "$ISOLATED_CLAUDE" 2>/dev/null || true
+    fi
+    
+    exit $exit_code
+}
+
+# Set up signal handlers
+trap cleanup SIGINT SIGTERM EXIT
+
 echo -e "${GREEN}=== Safe Claude Code Runner ===${NC}"
 echo -e "Project: $PROJECT_DIR"
 echo -e "Safe workspace: $SAFE_WORKSPACE"
@@ -120,14 +152,18 @@ fi
 
 # Create project-specific directories
 PROJECT_NAME=$(echo "$PROJECT_DIR" | sed 's|/|-|g')
+echo -e "${YELLOW}Project session name: $PROJECT_NAME${NC}"
 mkdir -p "$ISOLATED_CLAUDE/projects/$PROJECT_NAME"
 mkdir -p "$ISOLATED_CLAUDE/todos"
 mkdir -p "$ISOLATED_CLAUDE/shell-snapshots"
 mkdir -p "$ISOLATED_CLAUDE/sessions"
 
 # Copy existing project sessions if they exist
-if [ -d "$HOME/.claude/projects/$PROJECT_NAME" ]; then
-    cp -r "$HOME/.claude/projects/$PROJECT_NAME"/* "$ISOLATED_CLAUDE/projects/$PROJECT_NAME/" 2>/dev/null || true
+if [ -d "$HOME/.claude/projects/$PROJECT_NAME" ] && [ "$(ls -A "$HOME/.claude/projects/$PROJECT_NAME")" ]; then
+    echo -e "${YELLOW}Loading existing project sessions...${NC}"
+    cp -r "$HOME/.claude/projects/$PROJECT_NAME"/. "$ISOLATED_CLAUDE/projects/$PROJECT_NAME/"
+else
+    echo -e "${YELLOW}No existing sessions found for this project${NC}"
 fi
 
 # Claude config info
@@ -172,13 +208,6 @@ docker run -it \
 CONTAINER_EXIT_CODE=$?
 set -e
 
-# After container exits, sync project sessions back to main .claude
-if [ -d "$ISOLATED_CLAUDE/projects/$PROJECT_NAME" ]; then
-    echo -e "${YELLOW}Saving project sessions...${NC}"
-    mkdir -p "$HOME/.claude/projects/$PROJECT_NAME"
-    cp -r "$ISOLATED_CLAUDE/projects/$PROJECT_NAME"/* "$HOME/.claude/projects/$PROJECT_NAME/" 2>/dev/null || true
-fi
-
 # After container exits, check for changes
 echo
 echo -e "${YELLOW}=== Reviewing Changes ===${NC}"
@@ -192,7 +221,6 @@ fi
 # Check if there are any changes
 if eval diff -qr "$PROJECT_DIR" "$SAFE_WORKSPACE" $DIFF_EXCLUDES >/dev/null 2>&1; then
     echo -e "${GREEN}No changes were made${NC}"
-    rm -rf "$SAFE_WORKSPACE"
     exit 0
 fi
 
@@ -221,13 +249,11 @@ if [[ "$INTERACTIVE" = true ]]; then
         eval rsync -av --delete $EXCLUDES --exclude='.claude-isolated' \
           "$SAFE_WORKSPACE/" "$PROJECT_DIR/"
         echo -e "${GREEN}✓ Changes applied to project (including deletions)${NC}"
-        rm -rf "$SAFE_WORKSPACE"
     else
-        echo -e "${YELLOW}Changes preserved in: $SAFE_WORKSPACE${NC}"
-        echo "To manually copy later:"
-        echo "  rsync -av --delete --exclude='.claude-isolated' $SAFE_WORKSPACE/ $PROJECT_DIR/"
-        echo "Then delete with:"
-        echo "  rm -rf $SAFE_WORKSPACE"
+        echo -e "${YELLOW}Changes not applied to project${NC}"
+        echo -e "${RED}Warning: Changes will be lost on exit!${NC}"
+        echo "To apply changes, rerun with --interactive and choose 'y'"
+        exit 1
     fi
 else
     echo
@@ -235,5 +261,4 @@ else
     eval rsync -av --delete $EXCLUDES --exclude='.claude-isolated' \
       "$SAFE_WORKSPACE/" "$PROJECT_DIR/"
     echo -e "${GREEN}✓ Changes applied to project (including deletions)${NC}"
-    rm -rf "$SAFE_WORKSPACE"
 fi
