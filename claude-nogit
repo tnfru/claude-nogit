@@ -77,7 +77,8 @@ done
 # Configuration
 PROJECT_DIR="${PROJECT_DIR:-.}"
 PROJECT_DIR="$(cd "$PROJECT_DIR" && pwd)"  # Convert to absolute path
-SAFE_WORKSPACE="/tmp/claude-workspace-$$"
+SAFE_WORKSPACE=$(mktemp -d /tmp/claude-workspace-XXXXXXXXXX)
+rmdir "$SAFE_WORKSPACE"  # rsync will recreate it; mktemp ensures unique name with 0700 perms
 CONTAINER_IMAGE="claude-code-dev"
 
 # Resolve devcontainer directory: prefer repo-local, fall back to ~/.claude/devcontainer
@@ -95,6 +96,9 @@ if [ ! -d "$PROJECT_DIR" ]; then
     echo -e "${RED}Error: Directory '$PROJECT_DIR' does not exist${NC}"
     exit 1
 fi
+
+# Track whether project files have been synced back
+PROJECT_SYNCED=false
 
 # Cleanup function for proper signal handling
 cleanup() {
@@ -124,13 +128,25 @@ cleanup() {
         fi
     fi
 
-    # Clean up temporary directories
-    if [ -n "$SAFE_WORKSPACE" ] && [ -d "$SAFE_WORKSPACE" ]; then
-        rm -rf "$SAFE_WORKSPACE" 2>/dev/null || true
+    # If project files weren't synced back yet, preserve the workspace for recovery
+    if [ "$PROJECT_SYNCED" = false ] && [ -n "$SAFE_WORKSPACE" ] && [ -d "$SAFE_WORKSPACE" ]; then
+        echo -e "${YELLOW}Changes were not synced back to project.${NC}"
+        echo -e "${YELLOW}Your workspace is preserved at: $SAFE_WORKSPACE${NC}"
+        echo -e "${YELLOW}To recover, run: rsync -av --exclude='.claude-isolated' '$SAFE_WORKSPACE/' '$PROJECT_DIR/'${NC}"
+    else
+        # Clean up temporary directories
+        if [ -n "$SAFE_WORKSPACE" ] && [ -d "$SAFE_WORKSPACE" ]; then
+            rm -rf "$SAFE_WORKSPACE" 2>/dev/null || true
+        fi
     fi
 
     if [ -n "$ISOLATED_CLAUDE" ] && [ -d "$ISOLATED_CLAUDE" ]; then
         rm -rf "$ISOLATED_CLAUDE" 2>/dev/null || true
+    fi
+
+    # Clean up gitignore snapshot
+    if [ -n "$GITIGNORE_SNAPSHOT" ] && [ -f "$GITIGNORE_SNAPSHOT" ]; then
+        rm -f "$GITIGNORE_SNAPSHOT" 2>/dev/null || true
     fi
 
     exit $exit_code
@@ -154,8 +170,11 @@ else
     echo -e "${YELLOW}Full mode: Including all dependencies (may be slow)${NC}"
 fi
 
-# Respect .gitignore if present
+# Respect .gitignore if present — snapshot it so sync-back uses the original
+GITIGNORE_SNAPSHOT=""
 if [ -f "$PROJECT_DIR/.gitignore" ]; then
+    GITIGNORE_SNAPSHOT=$(mktemp /tmp/claude-gitignore-XXXXXXXXXX)
+    cp "$PROJECT_DIR/.gitignore" "$GITIGNORE_SNAPSHOT"
     EXCLUDES+=(--filter=':- .gitignore')
 fi
 
@@ -173,7 +192,11 @@ for file in .credentials.json settings.json CLAUDE.md; do
         cp "$HOME/.claude/$file" "$ISOLATED_CLAUDE/"
     fi
 done
-for dir in devcontainer hooks agents plugins statsig; do
+# Copy hook scripts so settings.json hook commands (e.g. ~/.claude/fix-resume.sh) work inside the container
+for script in "$HOME/.claude/"*.sh; do
+    [ -f "$script" ] && cp "$script" "$ISOLATED_CLAUDE/"
+done
+for dir in devcontainer hooks agents skills plugins statsig; do
     if [ -d "$HOME/.claude/$dir" ]; then
         cp -r "$HOME/.claude/$dir" "$ISOLATED_CLAUDE/"
     fi
@@ -279,6 +302,12 @@ docker run "${DOCKER_ARGS[@]}" "$CONTAINER_IMAGE" --dangerously-skip-permissions
 CONTAINER_EXIT_CODE=$?
 set -e
 
+# Warn on non-zero exit code
+if [ "$CONTAINER_EXIT_CODE" -ne 0 ]; then
+    echo -e "${YELLOW}Warning: Container exited with code $CONTAINER_EXIT_CODE${NC}"
+    echo -e "${YELLOW}Files may be in an inconsistent state. Review changes carefully.${NC}"
+fi
+
 # After container exits, check for changes
 echo
 echo -e "${YELLOW}=== Reviewing Changes ===${NC}"
@@ -292,13 +321,14 @@ fi
 # Check if there are any changes
 if diff -qr "${DIFF_EXCLUDES[@]}" "$PROJECT_DIR" "$SAFE_WORKSPACE" >/dev/null 2>&1; then
     echo -e "${GREEN}No changes were made${NC}"
+    PROJECT_SYNCED=true
     exit 0
 fi
 
 # Show detailed changes
 echo "Changes:"
 diff -qr "${DIFF_EXCLUDES[@]}" "$PROJECT_DIR" "$SAFE_WORKSPACE" | grep -v "Only in $PROJECT_DIR.*\.git" || true
-echo "(Files shown as 'Only in $PROJECT_DIR' were deleted)"
+echo "(Files 'Only in $PROJECT_DIR' were deleted; files 'Only in $SAFE_WORKSPACE' are new)"
 
 if [[ "$SHOW_DIFF" = true ]] || [[ "$INTERACTIVE" = true ]]; then
     echo
@@ -310,8 +340,14 @@ if [[ "$SHOW_DIFF" = true ]] || [[ "$INTERACTIVE" = true ]]; then
     fi
 fi
 
-# Sync back changes
-SYNC_EXCLUDES=("${EXCLUDES[@]}" --exclude='.claude-isolated')
+# Sync back changes — use original .gitignore snapshot to avoid divergence from Claude's edits
+SYNC_EXCLUDES=(--exclude='.git/' --exclude='.DS_Store' --exclude='.claude-isolated')
+if [ "$FULL_COPY" = false ]; then
+    SYNC_EXCLUDES+=(--exclude='node_modules' --exclude='.venv' --exclude='__pycache__' --exclude='*.pyc')
+fi
+if [ -n "$GITIGNORE_SNAPSHOT" ] && [ -f "$GITIGNORE_SNAPSHOT" ]; then
+    SYNC_EXCLUDES+=(--filter=". $GITIGNORE_SNAPSHOT")
+fi
 
 if [[ "$INTERACTIVE" = true ]]; then
     echo
@@ -320,16 +356,17 @@ if [[ "$INTERACTIVE" = true ]]; then
     echo
     if [[ $REPLY =~ ^[Yy]$ ]]; then
         rsync -av --delete "${SYNC_EXCLUDES[@]}" "$SAFE_WORKSPACE/" "$PROJECT_DIR/"
+        PROJECT_SYNCED=true
         echo -e "${GREEN}✓ Changes applied to project (including deletions)${NC}"
     else
         echo -e "${YELLOW}Changes not applied to project${NC}"
-        echo -e "${RED}Warning: Changes will be lost on exit!${NC}"
-        echo "To apply changes, rerun with --interactive and choose 'y'"
+        echo -e "${YELLOW}Workspace preserved at: $SAFE_WORKSPACE${NC}"
         exit 1
     fi
 else
     echo
     echo -e "${GREEN}Automatically copying changes back to project...${NC}"
     rsync -av --delete "${SYNC_EXCLUDES[@]}" "$SAFE_WORKSPACE/" "$PROJECT_DIR/"
+    PROJECT_SYNCED=true
     echo -e "${GREEN}✓ Changes applied to project (including deletions)${NC}"
 fi

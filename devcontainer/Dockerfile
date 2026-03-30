@@ -33,9 +33,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Create non-root user (named 'node' for mount path compatibility)
 ARG USERNAME=node
-RUN useradd -m -s /bin/zsh -G sudo $USERNAME && \
-    echo "$USERNAME ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/$USERNAME && \
-    chmod 0440 /etc/sudoers.d/$USERNAME
+RUN useradd -m -s /bin/zsh $USERNAME
 
 # Persist shell history
 RUN mkdir /commandhistory && \

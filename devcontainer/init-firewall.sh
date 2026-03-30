@@ -25,14 +25,10 @@ else
 fi
 
 # First allow DNS and localhost before any restrictions
-# Allow outbound DNS
-iptables -A OUTPUT -p udp --dport 53 -j ACCEPT
-# Allow inbound DNS responses
-iptables -A INPUT -p udp --sport 53 -j ACCEPT
-# Allow outbound SSH
-iptables -A OUTPUT -p tcp --dport 22 -j ACCEPT
-# Allow inbound SSH responses
-iptables -A INPUT -p tcp --sport 22 -m state --state ESTABLISHED -j ACCEPT
+# Allow outbound DNS only to Docker's internal resolver
+iptables -A OUTPUT -p udp --dport 53 -d 127.0.0.11 -j ACCEPT
+# Allow inbound DNS responses from Docker's internal resolver
+iptables -A INPUT -p udp --sport 53 -s 127.0.0.11 -j ACCEPT
 # Allow localhost
 iptables -A INPUT -i lo -j ACCEPT
 iptables -A OUTPUT -o lo -j ACCEPT
@@ -61,7 +57,7 @@ while read -r cidr; do
     fi
     echo "Adding GitHub range $cidr"
     ipset add allowed-domains "$cidr"
-done < <(echo "$gh_ranges" | jq -r '(.web + .api + .git)[]' | aggregate -q)
+done < <(echo "$gh_ranges" | jq -r '(.web + .api + .git)[]' | grep -v ':' | aggregate -q)
 
 # Resolve and add other allowed domains
 for domain in \
@@ -94,12 +90,11 @@ if [ -z "$HOST_IP" ]; then
     exit 1
 fi
 
-HOST_NETWORK=$(echo "$HOST_IP" | sed "s/\.[0-9]*$/.0\/24/")
-echo "Host network detected as: $HOST_NETWORK"
+echo "Host gateway detected as: $HOST_IP"
 
-# Set up remaining iptables rules
-iptables -A INPUT -s "$HOST_NETWORK" -j ACCEPT
-iptables -A OUTPUT -d "$HOST_NETWORK" -j ACCEPT
+# Set up remaining iptables rules — allow only the Docker gateway, not the entire /24
+iptables -A INPUT -s "$HOST_IP" -j ACCEPT
+iptables -A OUTPUT -d "$HOST_IP" -j ACCEPT
 
 # Set default policies to DROP first
 iptables -P INPUT DROP
