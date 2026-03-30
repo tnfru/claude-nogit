@@ -25,6 +25,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   iproute2 \
   dnsutils \
   aggregate \
+  python3 \
   jq \
   nano \
   vim \
