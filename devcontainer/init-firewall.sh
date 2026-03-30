@@ -19,7 +19,12 @@ if [ -n "$DOCKER_DNS_RULES" ]; then
     echo "Restoring Docker DNS rules..."
     iptables -t nat -N DOCKER_OUTPUT 2>/dev/null || true
     iptables -t nat -N DOCKER_POSTROUTING 2>/dev/null || true
-    echo "$DOCKER_DNS_RULES" | xargs -L 1 iptables -t nat
+    # Only process actual rule lines (starting with -A) to avoid format issues
+    while IFS= read -r rule; do
+        if [[ "$rule" == -A* ]]; then
+            iptables -t nat $rule || echo "WARNING: Failed to restore NAT rule: $rule"
+        fi
+    done <<< "$DOCKER_DNS_RULES"
 else
     echo "No Docker DNS rules to restore"
 fi
@@ -37,29 +42,29 @@ iptables -A OUTPUT -o lo -j ACCEPT
 ipset create allowed-domains hash:net
 
 # Fetch GitHub meta information and aggregate + add their IP ranges
+# If GitHub API is unreachable, skip GitHub ranges rather than blocking container startup
 echo "Fetching GitHub IP ranges..."
-gh_ranges=$(curl -s https://api.github.com/meta)
-if [ -z "$gh_ranges" ]; then
-    echo "ERROR: Failed to fetch GitHub IP ranges"
-    exit 1
-fi
+gh_ranges=$(curl -s --connect-timeout 10 https://api.github.com/meta || true)
 
-if ! echo "$gh_ranges" | jq -e '.web and .api and .git' >/dev/null; then
-    echo "ERROR: GitHub API response missing required fields"
-    exit 1
+if [ -z "$gh_ranges" ] || ! echo "$gh_ranges" | jq -e '.web and .api and .git' >/dev/null 2>&1; then
+    echo "WARNING: Failed to fetch GitHub IP ranges — GitHub access will not be available"
+else
+    echo "Processing GitHub IPs..."
+    while read -r cidr; do
+        if [[ ! "$cidr" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}/[0-9]{1,2}$ ]]; then
+            echo "WARNING: Skipping invalid CIDR range from GitHub meta: $cidr"
+            continue
+        fi
+        echo "Adding GitHub range $cidr"
+        ipset add allowed-domains "$cidr"
+    done < <(echo "$gh_ranges" | jq -r '(.web + .api + .git)[]' | grep -v ':' | aggregate -q)
 fi
-
-echo "Processing GitHub IPs..."
-while read -r cidr; do
-    if [[ ! "$cidr" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}/[0-9]{1,2}$ ]]; then
-        echo "ERROR: Invalid CIDR range from GitHub meta: $cidr"
-        exit 1
-    fi
-    echo "Adding GitHub range $cidr"
-    ipset add allowed-domains "$cidr"
-done < <(echo "$gh_ranges" | jq -r '(.web + .api + .git)[]' | grep -v ':' | aggregate -q)
 
 # Resolve and add other allowed domains
+# NOTE: IP-based filtering has inherent limitations with CDN-hosted services:
+# - IPs are resolved at startup; CDN rotation during long sessions may break connectivity
+# - Shared CDN IPs (e.g., Cloudflare) may also serve other domains on the same IP
+# A forward proxy with SNI inspection would be more robust but adds complexity
 for domain in \
     "registry.npmjs.org" \
     "api.anthropic.com" \
@@ -69,14 +74,14 @@ for domain in \
     echo "Resolving $domain..."
     ips=$(dig +noall +answer A "$domain" | awk '$4 == "A" {print $5}')
     if [ -z "$ips" ]; then
-        echo "ERROR: Failed to resolve $domain"
-        exit 1
+        echo "WARNING: Failed to resolve $domain — access to this service will not be available"
+        continue
     fi
-    
+
     while read -r ip; do
         if [[ ! "$ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
-            echo "ERROR: Invalid IP from DNS for $domain: $ip"
-            exit 1
+            echo "WARNING: Skipping invalid IP from DNS for $domain: $ip"
+            continue
         fi
         echo "Adding $ip for $domain"
         ipset add allowed-domains "$ip"
@@ -96,17 +101,24 @@ echo "Host gateway detected as: $HOST_IP"
 iptables -A INPUT -s "$HOST_IP" -j ACCEPT
 iptables -A OUTPUT -d "$HOST_IP" -j ACCEPT
 
-# Set default policies to DROP first
+# Allow established connections for already approved traffic
+iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+
+# Allow only specific outbound traffic to allowed domains
+iptables -A OUTPUT -m set --match-set allowed-domains dst -j ACCEPT
+
+# Set default policies to DROP last, after all ACCEPT rules are in place
 iptables -P INPUT DROP
 iptables -P FORWARD DROP
 iptables -P OUTPUT DROP
 
-# First allow established connections for already approved traffic
-iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
-iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
-
-# Then allow only specific outbound traffic to allowed domains
-iptables -A OUTPUT -m set --match-set allowed-domains dst -j ACCEPT
+# Block all IPv6 traffic (prevents firewall bypass via IPv6)
+ip6tables -P INPUT DROP
+ip6tables -P OUTPUT DROP
+ip6tables -P FORWARD DROP
+ip6tables -A INPUT -i lo -j ACCEPT
+ip6tables -A OUTPUT -o lo -j ACCEPT
 
 echo "Firewall configuration complete"
 echo "Verifying firewall rules..."
@@ -117,10 +129,9 @@ else
     echo "Firewall verification passed - unable to reach https://example.com as expected"
 fi
 
-# Verify GitHub API access
-if ! curl --connect-timeout 5 https://api.github.com/zen >/dev/null 2>&1; then
-    echo "ERROR: Firewall verification failed - unable to reach https://api.github.com"
-    exit 1
+# Verify Anthropic API access (critical for Claude to function)
+if ! curl --connect-timeout 5 https://api.anthropic.com >/dev/null 2>&1; then
+    echo "WARNING: Unable to reach api.anthropic.com — Claude may not function correctly"
 else
-    echo "Firewall verification passed - able to reach https://api.github.com as expected"
+    echo "Firewall verification passed - able to reach api.anthropic.com as expected"
 fi

@@ -17,6 +17,7 @@ INTERACTIVE=false
 SHOW_DIFF=false
 FORCE_REBUILD=false
 USE_FIREWALL=false
+PURGE_SESSIONS=false
 PROJECT_DIR=""
 CLAUDE_ARGS=()
 
@@ -42,17 +43,22 @@ while [[ $# -gt 0 ]]; do
             USE_FIREWALL=true
             shift
             ;;
+        --purge-sessions)
+            PURGE_SESSIONS=true
+            shift
+            ;;
         -h|--help)
             echo "claude-nogit - Run Claude Code in a safe container without git access"
             echo "Usage: claude-nogit [options] [project-directory] [-- claude-args...]"
             echo ""
             echo "Options:"
-            echo "  --full         Include node_modules/.venv (slower but complete)"
-            echo "  --interactive  Prompt before copying changes back"
-            echo "  --show-diff    Show diff review before auto-copying"
-            echo "  --rebuild      Force Docker image rebuild"
-            echo "  --firewall     Enable network firewall (only allows Anthropic, GitHub, npm)"
-            echo "  -h, --help     Show help"
+            echo "  --full             Include node_modules/.venv (slower but complete)"
+            echo "  --interactive      Prompt before copying changes back"
+            echo "  --show-diff        Show diff review before auto-copying"
+            echo "  --rebuild          Force Docker image rebuild"
+            echo "  --firewall         Enable network firewall (only allows Anthropic, GitHub, npm)"
+            echo "  --purge-sessions   Delete all session data for the given project and exit"
+            echo "  -h, --help         Show help"
             echo ""
             echo "Arguments after -- are passed directly to Claude:"
             echo "  claude-nogit /path/to/project -- --model opus --resume"
@@ -77,8 +83,22 @@ done
 # Configuration
 PROJECT_DIR="${PROJECT_DIR:-.}"
 PROJECT_DIR="$(cd "$PROJECT_DIR" && pwd)"  # Convert to absolute path
+
+# Handle --purge-sessions
+if [ "$PURGE_SESSIONS" = true ]; then
+    HOST_PROJECT_NAME=$(echo "$PROJECT_DIR" | sed 's|/|-|g')
+    SESSION_DIR="$HOME/.claude/projects/$HOST_PROJECT_NAME"
+    if [ -d "$SESSION_DIR" ]; then
+        rm -rf "$SESSION_DIR"
+        echo -e "${GREEN}✓ Purged session data for $PROJECT_DIR${NC}"
+    else
+        echo -e "${YELLOW}No session data found for $PROJECT_DIR${NC}"
+    fi
+    exit 0
+fi
+
 SAFE_WORKSPACE=$(mktemp -d /tmp/claude-workspace-XXXXXXXXXX)
-rmdir "$SAFE_WORKSPACE"  # rsync will recreate it; mktemp ensures unique name with 0700 perms
+# mktemp creates with 0700 permissions, keeping project files private
 CONTAINER_IMAGE="claude-code-dev"
 
 # Resolve devcontainer directory: prefer repo-local, fall back to ~/.claude/devcontainer
@@ -100,22 +120,25 @@ fi
 # Track whether project files have been synced back
 PROJECT_SYNCED=false
 
+# Generate unique container ID (PID + timestamp to avoid collisions)
+CONTAINER_ID="$$-$(date +%s)"
+
 # Cleanup function for proper signal handling
 cleanup() {
     local exit_code=$?
 
     # If container is still running, stop it
     local cid
-    cid=$(docker ps -q --filter "name=claude-safe-$$" 2>/dev/null)
+    cid=$(docker ps -q --filter "name=claude-safe-${CONTAINER_ID}" 2>/dev/null)
     if [ -n "$cid" ]; then
         echo -e "\n${YELLOW}Stopping container...${NC}"
-        docker stop "claude-safe-$$" >/dev/null 2>&1 || true
+        docker stop "claude-safe-${CONTAINER_ID}" >/dev/null 2>&1 || true
     fi
 
     # Sync Claude state back to host
-    if [ -n "$ISOLATED_CLAUDE" ] && [ -d "$ISOLATED_CLAUDE" ]; then
+    if [ -n "${ISOLATED_CLAUDE:-}" ] && [ -d "$ISOLATED_CLAUDE" ]; then
         # Map container's -workspace sessions back to the host's real project name
-        if [ -d "$ISOLATED_CLAUDE/projects/$CONTAINER_PROJECT_NAME" ] && [ "$(ls -A "$ISOLATED_CLAUDE/projects/$CONTAINER_PROJECT_NAME" 2>/dev/null)" ]; then
+        if [ -d "$ISOLATED_CLAUDE/projects/${CONTAINER_PROJECT_NAME:-}" ] && [ "$(ls -A "$ISOLATED_CLAUDE/projects/$CONTAINER_PROJECT_NAME" 2>/dev/null)" ]; then
             echo -e "${YELLOW}Saving project sessions...${NC}"
             mkdir -p "$HOME/.claude/projects/$HOST_PROJECT_NAME"
             cp -r "$ISOLATED_CLAUDE/projects/$CONTAINER_PROJECT_NAME"/. "$HOME/.claude/projects/$HOST_PROJECT_NAME/" 2>/dev/null || true
@@ -129,24 +152,16 @@ cleanup() {
     fi
 
     # If project files weren't synced back yet, preserve the workspace for recovery
-    if [ "$PROJECT_SYNCED" = false ] && [ -n "$SAFE_WORKSPACE" ] && [ -d "$SAFE_WORKSPACE" ]; then
+    if [ "$PROJECT_SYNCED" = false ] && [ -n "${SAFE_WORKSPACE:-}" ] && [ -d "$SAFE_WORKSPACE" ]; then
         echo -e "${YELLOW}Changes were not synced back to project.${NC}"
         echo -e "${YELLOW}Your workspace is preserved at: $SAFE_WORKSPACE${NC}"
-        echo -e "${YELLOW}To recover, run: rsync -av --exclude='.claude-isolated' '$SAFE_WORKSPACE/' '$PROJECT_DIR/'${NC}"
+        echo -e "${YELLOW}To recover, run:${NC}"
+        echo -e "${YELLOW}  rsync -av --exclude='.git/' --exclude='.DS_Store' --exclude='.claude-isolated' '$SAFE_WORKSPACE/' '$PROJECT_DIR/'${NC}"
     else
-        # Clean up temporary directories
-        if [ -n "$SAFE_WORKSPACE" ] && [ -d "$SAFE_WORKSPACE" ]; then
+        # Clean up temporary directories (including .claude-isolated inside it)
+        if [ -n "${SAFE_WORKSPACE:-}" ] && [ -d "$SAFE_WORKSPACE" ]; then
             rm -rf "$SAFE_WORKSPACE" 2>/dev/null || true
         fi
-    fi
-
-    if [ -n "$ISOLATED_CLAUDE" ] && [ -d "$ISOLATED_CLAUDE" ]; then
-        rm -rf "$ISOLATED_CLAUDE" 2>/dev/null || true
-    fi
-
-    # Clean up gitignore snapshot
-    if [ -n "$GITIGNORE_SNAPSHOT" ] && [ -f "$GITIGNORE_SNAPSHOT" ]; then
-        rm -f "$GITIGNORE_SNAPSHOT" 2>/dev/null || true
     fi
 
     exit $exit_code
@@ -170,13 +185,8 @@ else
     echo -e "${YELLOW}Full mode: Including all dependencies (may be slow)${NC}"
 fi
 
-# Respect .gitignore if present — snapshot it so sync-back uses the original
-GITIGNORE_SNAPSHOT=""
-if [ -f "$PROJECT_DIR/.gitignore" ]; then
-    GITIGNORE_SNAPSHOT=$(mktemp /tmp/claude-gitignore-XXXXXXXXXX)
-    cp "$PROJECT_DIR/.gitignore" "$GITIGNORE_SNAPSHOT"
-    EXCLUDES+=(--filter=':- .gitignore')
-fi
+# Respect .gitignore files (per-directory merge handles nested .gitignore correctly)
+EXCLUDES+=(--filter=':- .gitignore')
 
 # Create clean copy
 echo -e "${YELLOW}Creating clean workspace...${NC}"
@@ -186,8 +196,8 @@ rsync -av "${EXCLUDES[@]}" --exclude='.DS_Store' "$PROJECT_DIR/" "$SAFE_WORKSPAC
 ISOLATED_CLAUDE="$SAFE_WORKSPACE/.claude-isolated"
 mkdir -p "$ISOLATED_CLAUDE"
 
-# Copy only necessary files from main .claude (auth, settings, etc.)
-for file in .credentials.json settings.json CLAUDE.md; do
+# Copy necessary config files (credentials are mounted read-only at runtime, not copied)
+for file in settings.json CLAUDE.md; do
     if [ -f "$HOME/.claude/$file" ]; then
         cp "$HOME/.claude/$file" "$ISOLATED_CLAUDE/"
     fi
@@ -272,21 +282,31 @@ echo -e "${YELLOW}You're now in a safe environment. The .git folder is not acces
 echo -e "${GREEN}Claude will auto-start with --dangerously-skip-permissions${NC}"
 if [ "$USE_FIREWALL" = true ]; then
     echo -e "${GREEN}Network firewall enabled (only Anthropic, GitHub, npm allowed)${NC}"
+else
+    echo -e "${YELLOW}Warning: Running without --firewall. Claude has unrestricted network access inside the container.${NC}"
 fi
 echo
 
 # Build docker run arguments
 DOCKER_ARGS=(
     -it --rm
-    --name "claude-safe-$$"
+    --name "claude-safe-${CONTAINER_ID}"
     -v "$SAFE_WORKSPACE:/workspace"
     -v "$ISOLATED_CLAUDE:/home/node/.claude"
     --tmpfs /tmp:rw,exec,size=100m
+    --memory=8g
+    --cpus=4
+    --pids-limit=512
     -w /workspace
 )
 
+# Mount credentials read-only (avoids copying secrets to temp dir)
+if [ -f "$HOME/.claude/.credentials.json" ]; then
+    DOCKER_ARGS+=(-v "$HOME/.claude/.credentials.json:/home/node/.claude/.credentials.json:ro")
+fi
+
 if [ -f "$HOME/.claude.json" ]; then
-    DOCKER_ARGS+=(-v "$HOME/.claude.json:/home/node/.claude.json")
+    DOCKER_ARGS+=(-v "$HOME/.claude.json:/home/node/.claude.json:ro")
 fi
 
 if [ "$USE_FIREWALL" = true ]; then
@@ -312,41 +332,36 @@ fi
 echo
 echo -e "${YELLOW}=== Reviewing Changes ===${NC}"
 
-# Build diff exclusions
-DIFF_EXCLUDES=(--exclude='.git' --exclude='.DS_Store' --exclude='.claude-isolated')
+# Build sync exclusions (used for both change detection and sync-back)
+SYNC_EXCLUDES=(--exclude='.git/' --exclude='.DS_Store' --exclude='.claude-isolated')
 if [ "$FULL_COPY" = false ]; then
-    DIFF_EXCLUDES+=(--exclude='node_modules' --exclude='.venv' --exclude='__pycache__' --exclude='*.pyc')
+    SYNC_EXCLUDES+=(--exclude='node_modules' --exclude='.venv' --exclude='__pycache__' --exclude='*.pyc')
 fi
+# Per-directory .gitignore merge filter handles nested .gitignore correctly
+SYNC_EXCLUDES+=(--filter=':- .gitignore')
 
-# Check if there are any changes
-if diff -qr "${DIFF_EXCLUDES[@]}" "$PROJECT_DIR" "$SAFE_WORKSPACE" >/dev/null 2>&1; then
+# Check if there are any changes using rsync dry-run (same filters as sync-back for consistency)
+CHANGE_OUTPUT=$(rsync -avn --delete "${SYNC_EXCLUDES[@]}" "$SAFE_WORKSPACE/" "$PROJECT_DIR/" 2>/dev/null \
+    | grep -v -E '^(sending|sent |total size|\./$|$)' || true)
+if [ -z "$CHANGE_OUTPUT" ]; then
     echo -e "${GREEN}No changes were made${NC}"
     PROJECT_SYNCED=true
     exit 0
 fi
 
-# Show detailed changes
+# Show changes
 echo "Changes:"
-diff -qr "${DIFF_EXCLUDES[@]}" "$PROJECT_DIR" "$SAFE_WORKSPACE" | grep -v "Only in $PROJECT_DIR.*\.git" || true
-echo "(Files 'Only in $PROJECT_DIR' were deleted; files 'Only in $SAFE_WORKSPACE' are new)"
+echo "$CHANGE_OUTPUT"
+echo "(Lines starting with 'deleting' indicate files removed by Claude)"
 
 if [[ "$SHOW_DIFF" = true ]] || [[ "$INTERACTIVE" = true ]]; then
     echo
-    echo -e "${YELLOW}Review changes with 'diff' command? (y/n)${NC}"
+    echo -e "${YELLOW}Review detailed diff? (y/n)${NC}"
     read -p "> " -n 1 -r
     echo
     if [[ $REPLY =~ ^[Yy]$ ]]; then
-        diff -ur "${DIFF_EXCLUDES[@]}" "$PROJECT_DIR" "$SAFE_WORKSPACE" || true
+        diff -ur --exclude='.git' --exclude='.DS_Store' --exclude='.claude-isolated' "$PROJECT_DIR" "$SAFE_WORKSPACE" || true
     fi
-fi
-
-# Sync back changes — use original .gitignore snapshot to avoid divergence from Claude's edits
-SYNC_EXCLUDES=(--exclude='.git/' --exclude='.DS_Store' --exclude='.claude-isolated')
-if [ "$FULL_COPY" = false ]; then
-    SYNC_EXCLUDES+=(--exclude='node_modules' --exclude='.venv' --exclude='__pycache__' --exclude='*.pyc')
-fi
-if [ -n "$GITIGNORE_SNAPSHOT" ] && [ -f "$GITIGNORE_SNAPSHOT" ]; then
-    SYNC_EXCLUDES+=(--filter=". $GITIGNORE_SNAPSHOT")
 fi
 
 if [[ "$INTERACTIVE" = true ]]; then

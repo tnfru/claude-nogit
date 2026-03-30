@@ -42,10 +42,10 @@ chmod +x "$DEVCONTAINER_DIR/entrypoint.sh" "$DEVCONTAINER_DIR/init-firewall.sh"
 if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
   echo -e "${YELLOW}Adding ~/.local/bin to PATH...${NC}"
 
-  if [[ "$SHELL" == */zsh ]] && ! grep -qF '.local/bin' ~/.zshrc 2>/dev/null; then
+  if [[ "$SHELL" == */zsh ]] && ! grep -qF 'export PATH="$HOME/.local/bin' ~/.zshrc 2>/dev/null; then
     echo 'export PATH="$HOME/.local/bin:$PATH"' >>~/.zshrc
     echo -e "${GREEN}Added to ~/.zshrc${NC}"
-  elif [[ "$SHELL" == */bash ]] && ! grep -qF '.local/bin' ~/.bashrc 2>/dev/null; then
+  elif [[ "$SHELL" == */bash ]] && ! grep -qF 'export PATH="$HOME/.local/bin' ~/.bashrc 2>/dev/null; then
     echo 'export PATH="$HOME/.local/bin:$PATH"' >>~/.bashrc
     echo -e "${GREEN}Added to ~/.bashrc${NC}"
   fi
