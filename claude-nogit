@@ -16,8 +16,9 @@ FULL_COPY=false
 INTERACTIVE=false
 SHOW_DIFF=false
 FORCE_REBUILD=false
-USE_FIREWALL=false
+USE_FIREWALL=true
 PURGE_SESSIONS=false
+DOCKER_NETWORK=""
 PROJECT_DIR=""
 CLAUDE_ARGS=()
 
@@ -43,6 +44,14 @@ while [[ $# -gt 0 ]]; do
             USE_FIREWALL=true
             shift
             ;;
+        --no-firewall)
+            USE_FIREWALL=false
+            shift
+            ;;
+        --network)
+            DOCKER_NETWORK="$2"
+            shift 2
+            ;;
         --purge-sessions)
             PURGE_SESSIONS=true
             shift
@@ -56,7 +65,9 @@ while [[ $# -gt 0 ]]; do
             echo "  --interactive      Prompt before copying changes back"
             echo "  --show-diff        Show diff review before auto-copying"
             echo "  --rebuild          Force Docker image rebuild"
-            echo "  --firewall         Enable network firewall (only allows Anthropic, GitHub, npm)"
+            echo "  --firewall         Enable network firewall (default; only allows Anthropic, GitHub, npm)"
+            echo "  --no-firewall      Disable network firewall (unrestricted network access)"
+            echo "  --network NAME     Connect container to a Docker network (e.g. for databases)"
             echo "  --purge-sessions   Delete all session data for the given project and exit"
             echo "  -h, --help         Show help"
             echo ""
@@ -196,8 +207,8 @@ rsync -av "${EXCLUDES[@]}" --exclude='.DS_Store' "$PROJECT_DIR/" "$SAFE_WORKSPAC
 ISOLATED_CLAUDE="$SAFE_WORKSPACE/.claude-isolated"
 mkdir -p "$ISOLATED_CLAUDE"
 
-# Copy necessary config files (credentials are mounted read-only at runtime, not copied)
-for file in settings.json CLAUDE.md; do
+# Copy necessary config files into isolated directory
+for file in .credentials.json settings.json CLAUDE.md; do
     if [ -f "$HOME/.claude/$file" ]; then
         cp "$HOME/.claude/$file" "$ISOLATED_CLAUDE/"
     fi
@@ -266,6 +277,9 @@ if [ "$NEEDS_BUILD" = true ]; then
     if [ -n "$DEVCONTAINER_DIR" ]; then
         echo -e "${YELLOW}Building Claude Code container${HOST_CLAUDE_VERSION:+ (v$HOST_CLAUDE_VERSION)}...${NC}"
         BUILD_ARGS=()
+        if [ "$FORCE_REBUILD" = true ]; then
+            BUILD_ARGS+=(--no-cache)
+        fi
         if [ -n "$HOST_CLAUDE_VERSION" ]; then
             BUILD_ARGS+=(--build-arg "CLAUDE_CODE_VERSION=$HOST_CLAUDE_VERSION")
         fi
@@ -283,7 +297,7 @@ echo -e "${GREEN}Claude will auto-start with --dangerously-skip-permissions${NC}
 if [ "$USE_FIREWALL" = true ]; then
     echo -e "${GREEN}Network firewall enabled (only Anthropic, GitHub, npm allowed)${NC}"
 else
-    echo -e "${YELLOW}Warning: Running without --firewall. Claude has unrestricted network access inside the container.${NC}"
+    echo -e "${RED}Warning: Firewall disabled (--no-firewall). Claude has unrestricted network access.${NC}"
 fi
 echo
 
@@ -294,19 +308,16 @@ DOCKER_ARGS=(
     -v "$SAFE_WORKSPACE:/workspace"
     -v "$ISOLATED_CLAUDE:/home/node/.claude"
     --tmpfs /tmp:rw,exec,size=100m
-    --memory=8g
-    --cpus=4
-    --pids-limit=512
+    --sysctl net.ipv6.conf.all.disable_ipv6=1
     -w /workspace
 )
 
-# Mount credentials read-only (avoids copying secrets to temp dir)
-if [ -f "$HOME/.claude/.credentials.json" ]; then
-    DOCKER_ARGS+=(-v "$HOME/.claude/.credentials.json:/home/node/.claude/.credentials.json:ro")
+if [ -f "$HOME/.claude.json" ]; then
+    DOCKER_ARGS+=(-v "$HOME/.claude.json:/home/node/.claude.json")
 fi
 
-if [ -f "$HOME/.claude.json" ]; then
-    DOCKER_ARGS+=(-v "$HOME/.claude.json:/home/node/.claude.json:ro")
+if [ -n "$DOCKER_NETWORK" ]; then
+    DOCKER_ARGS+=(--network "$DOCKER_NETWORK")
 fi
 
 if [ "$USE_FIREWALL" = true ]; then

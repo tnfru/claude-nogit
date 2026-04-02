@@ -29,11 +29,14 @@ else
     echo "No Docker DNS rules to restore"
 fi
 
-# First allow DNS and localhost before any restrictions
-# Allow outbound DNS only to Docker's internal resolver
-iptables -A OUTPUT -p udp --dport 53 -d 127.0.0.11 -j ACCEPT
-# Allow inbound DNS responses from Docker's internal resolver
-iptables -A INPUT -p udp --sport 53 -s 127.0.0.11 -j ACCEPT
+# Allow DNS to all configured nameservers (handles both Docker's 127.0.0.11 and host/Tailscale DNS)
+while read -r dns_ip; do
+    echo "Allowing DNS to $dns_ip"
+    iptables -A OUTPUT -p udp --dport 53 -d "$dns_ip" -j ACCEPT
+    iptables -A INPUT -p udp --sport 53 -s "$dns_ip" -j ACCEPT
+    iptables -A OUTPUT -p tcp --dport 53 -d "$dns_ip" -j ACCEPT
+    iptables -A INPUT -p tcp --sport 53 -s "$dns_ip" -j ACCEPT
+done < <(awk '/^nameserver/ {print $2}' /etc/resolv.conf)
 # Allow localhost
 iptables -A INPUT -i lo -j ACCEPT
 iptables -A OUTPUT -o lo -j ACCEPT
@@ -113,16 +116,18 @@ iptables -P INPUT DROP
 iptables -P FORWARD DROP
 iptables -P OUTPUT DROP
 
-# Block all IPv6 traffic (prevents firewall bypass via IPv6)
-ip6tables -P INPUT DROP
-ip6tables -P OUTPUT DROP
-ip6tables -P FORWARD DROP
+# Block IPv6 with REJECT (not DROP) so apps fall back to IPv4 immediately
 ip6tables -A INPUT -i lo -j ACCEPT
 ip6tables -A OUTPUT -o lo -j ACCEPT
+ip6tables -A INPUT -j REJECT
+ip6tables -A OUTPUT -j REJECT
+ip6tables -P INPUT DROP
+ip6tables -P FORWARD DROP
+ip6tables -P OUTPUT DROP
 
 echo "Firewall configuration complete"
 echo "Verifying firewall rules..."
-if curl --connect-timeout 5 https://example.com >/dev/null 2>&1; then
+if curl -4 --connect-timeout 5 https://example.com >/dev/null 2>&1; then
     echo "ERROR: Firewall verification failed - was able to reach https://example.com"
     exit 1
 else
@@ -130,7 +135,7 @@ else
 fi
 
 # Verify Anthropic API access (critical for Claude to function)
-if ! curl --connect-timeout 5 https://api.anthropic.com >/dev/null 2>&1; then
+if ! curl -4 --connect-timeout 5 https://api.anthropic.com >/dev/null 2>&1; then
     echo "WARNING: Unable to reach api.anthropic.com — Claude may not function correctly"
 else
     echo "Firewall verification passed - able to reach api.anthropic.com as expected"
