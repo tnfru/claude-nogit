@@ -86,6 +86,9 @@ RUN mkdir -p /home/$USERNAME/.local/bin && \
     chmod +x /home/$USERNAME/.local/bin/claude && \
     echo 'export PATH="$HOME/.local/bin:$PATH"' >> /home/$USERNAME/.zshrc
 
+# Install uv (Python package manager)
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+
 # Disable auto-updates in ephemeral container
 ENV DISABLE_AUTOUPDATER=1
 

@@ -154,6 +154,12 @@ cleanup() {
             mkdir -p "$HOME/.claude/projects/$HOST_PROJECT_NAME"
             cp -r "$ISOLATED_CLAUDE/projects/$CONTAINER_PROJECT_NAME"/. "$HOME/.claude/projects/$HOST_PROJECT_NAME/" 2>/dev/null || true
         fi
+        # Sync sessions
+        if [ -d "$ISOLATED_CLAUDE/sessions" ] && [ "$(ls -A "$ISOLATED_CLAUDE/sessions" 2>/dev/null)" ]; then
+            echo -e "${YELLOW}Saving sessions...${NC}"
+            mkdir -p "$HOME/.claude/sessions"
+            cp -r "$ISOLATED_CLAUDE/sessions"/. "$HOME/.claude/sessions/" 2>/dev/null || true
+        fi
         # Sync todos
         if [ -d "$ISOLATED_CLAUDE/todos" ] && [ "$(ls -A "$ISOLATED_CLAUDE/todos" 2>/dev/null)" ]; then
             echo -e "${YELLOW}Saving todos...${NC}"
@@ -241,6 +247,11 @@ if [ -d "$HOME/.claude/projects/$HOST_PROJECT_NAME" ] && [ "$(ls -A "$HOME/.clau
     cp -r "$HOME/.claude/projects/$HOST_PROJECT_NAME"/. "$ISOLATED_CLAUDE/projects/$CONTAINER_PROJECT_NAME/"
 else
     echo -e "${YELLOW}No existing sessions found for this project${NC}"
+fi
+
+# Copy existing sessions if they exist
+if [ -d "$HOME/.claude/sessions" ] && [ "$(ls -A "$HOME/.claude/sessions" 2>/dev/null)" ]; then
+    cp -r "$HOME/.claude/sessions"/. "$ISOLATED_CLAUDE/sessions/"
 fi
 
 # Copy existing todos if they exist
