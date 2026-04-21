@@ -262,11 +262,11 @@ fi
 echo -e "${GREEN}✓ Created isolated Claude configuration${NC}"
 echo -e "${GREEN}✓ Project-specific session storage enabled${NC}"
 
-# Detect host Claude version for image version matching
+# Detect host Claude version (required for building the image)
 HOST_CLAUDE_VERSION=$(claude --version 2>/dev/null | grep -oP '[\d.]+' | head -1)
 if [ -z "$HOST_CLAUDE_VERSION" ]; then
-    echo -e "${YELLOW}Could not detect host Claude version, using image default${NC}"
-    HOST_CLAUDE_VERSION=""
+    echo -e "${RED}Error: Could not detect host Claude version. Is 'claude' on your PATH?${NC}"
+    exit 1
 fi
 
 # Check if container image needs building/rebuilding
@@ -276,7 +276,7 @@ if ! docker image inspect "$CONTAINER_IMAGE" >/dev/null 2>&1; then
 elif [ "$FORCE_REBUILD" = true ]; then
     echo -e "${YELLOW}Forced rebuild requested${NC}"
     NEEDS_BUILD=true
-elif [ -n "$HOST_CLAUDE_VERSION" ]; then
+else
     CURRENT_IMAGE_VERSION=$(docker image inspect "$CONTAINER_IMAGE" --format '{{index .Config.Labels "claude.version"}}' 2>/dev/null || echo "")
     if [ "$CURRENT_IMAGE_VERSION" != "$HOST_CLAUDE_VERSION" ]; then
         echo -e "${YELLOW}Claude version mismatch: image=$CURRENT_IMAGE_VERSION host=$HOST_CLAUDE_VERSION${NC}"
@@ -287,12 +287,9 @@ fi
 if [ "$NEEDS_BUILD" = true ]; then
     if [ -n "$DEVCONTAINER_DIR" ]; then
         echo -e "${YELLOW}Building Claude Code container${HOST_CLAUDE_VERSION:+ (v$HOST_CLAUDE_VERSION)}...${NC}"
-        BUILD_ARGS=()
+        BUILD_ARGS=(--build-arg "CLAUDE_CODE_VERSION=$HOST_CLAUDE_VERSION")
         if [ "$FORCE_REBUILD" = true ]; then
             BUILD_ARGS+=(--no-cache)
-        fi
-        if [ -n "$HOST_CLAUDE_VERSION" ]; then
-            BUILD_ARGS+=(--build-arg "CLAUDE_CODE_VERSION=$HOST_CLAUDE_VERSION")
         fi
         docker build -t "$CONTAINER_IMAGE" "${BUILD_ARGS[@]}" "$DEVCONTAINER_DIR/"
     else

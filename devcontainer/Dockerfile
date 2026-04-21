@@ -3,7 +3,7 @@ FROM debian:bookworm-slim
 ARG TZ
 ENV TZ="$TZ"
 
-ARG CLAUDE_CODE_VERSION=latest
+ARG CLAUDE_CODE_VERSION
 
 # Install system dependencies (no Node.js needed - Claude is a native binary)
 RUN apt-get update && apt-get install -y --no-install-recommends \
