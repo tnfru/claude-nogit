@@ -91,6 +91,7 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # Disable auto-updates in ephemeral container
 ENV DISABLE_AUTOUPDATER=1
+ENV COLORTERM=truecolor
 
 # Copy and set up firewall script
 COPY init-firewall.sh /usr/local/bin/
