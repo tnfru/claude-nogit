@@ -320,6 +320,7 @@ DOCKER_ARGS=(
     -v "$ISOLATED_CLAUDE:/home/node/.claude"
     --tmpfs /tmp:rw,exec,size=100m
     --sysctl net.ipv6.conf.all.disable_ipv6=1
+    -e TZ="${TZ:-$(cat /etc/timezone 2>/dev/null || echo UTC)}"
     -w /workspace
 )
 
