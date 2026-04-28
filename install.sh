@@ -56,4 +56,4 @@ fi
 echo -e "${GREEN}✓ Installation complete!${NC}"
 echo -e "${GREEN}Usage: claude-nogit [project-directory]${NC}"
 echo -e "${YELLOW}Example: claude-nogit ~/my-project${NC}"
-echo -e "${YELLOW}Use --firewall for network isolation${NC}"
+echo -e "${YELLOW}The network firewall is enabled by default; pass --no-firewall to disable it.${NC}"
