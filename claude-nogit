@@ -214,7 +214,7 @@ rsync -av "${EXCLUDES[@]}" --exclude='.DS_Store' "$PROJECT_DIR/" "$SAFE_WORKSPAC
 echo -e "${YELLOW}Creating diff baseline...${NC}"
 git -C "$SAFE_WORKSPACE" init -q
 git -C "$SAFE_WORKSPACE" add -A
-git -C "$SAFE_WORKSPACE" -c user.name="baseline" -c user.email="baseline" commit -q -m "baseline" --allow-empty
+git -C "$SAFE_WORKSPACE" -c user.name="baseline" -c user.email="baseline" -c commit.gpgsign=false commit -q -m "baseline" --allow-empty
 git -C "$SAFE_WORKSPACE" tag baseline
 echo -e "${GREEN}✓ Diff baseline created (use 'git diff baseline' to see changes)${NC}"
 
