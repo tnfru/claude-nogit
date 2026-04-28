@@ -3,7 +3,7 @@
 # claude-nogit - Run Claude Code in a safe container without git access
 # Usage: claude-nogit [options] [project-directory] [-- claude-args...]
 
-set -e
+set -euo pipefail
 
 # Colors
 GREEN='\033[0;32m'
@@ -21,6 +21,16 @@ PURGE_SESSIONS=false
 DOCKER_NETWORK=""
 PROJECT_DIR=""
 CLAUDE_ARGS=()
+
+# State variables touched by the EXIT trap. Initialised up front so cleanup
+# is safe under `set -u` even if the script exits before they are populated.
+SAFE_WORKSPACE=""
+ISOLATED_CLAUDE=""
+HOST_PROJECT_NAME=""
+CONTAINER_PROJECT_NAME="-workspace"
+CONTAINER_ID=""
+CONTAINER_EXIT_CODE=0
+PROJECT_SYNCED=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -65,8 +75,8 @@ while [[ $# -gt 0 ]]; do
             echo "  --interactive      Prompt before copying changes back"
             echo "  --show-diff        Show diff review before auto-copying"
             echo "  --rebuild          Force Docker image rebuild"
-            echo "  --firewall         Enable network firewall (default; only allows Anthropic, GitHub, npm)"
-            echo "  --no-firewall      Disable network firewall (unrestricted network access)"
+            echo "  --firewall         (default) Restrict network to Anthropic API, GitHub, and npm"
+            echo "  --no-firewall      Disable the firewall (unrestricted network access)"
             echo "  --network NAME     Connect container to a Docker network (e.g. for databases)"
             echo "  --purge-sessions   Delete all session data for the given project and exit"
             echo "  -h, --help         Show help"
@@ -128,9 +138,6 @@ if [ ! -d "$PROJECT_DIR" ]; then
     exit 1
 fi
 
-# Track whether project files have been synced back
-PROJECT_SYNCED=false
-
 # Generate unique container ID (PID + timestamp to avoid collisions)
 CONTAINER_ID="$$-$(date +%s)"
 
@@ -138,18 +145,23 @@ CONTAINER_ID="$$-$(date +%s)"
 cleanup() {
     local exit_code=$?
 
+    # Disarm so SIGINT followed by EXIT doesn't run cleanup twice
+    trap - SIGINT SIGTERM EXIT
+
     # If container is still running, stop it
-    local cid
-    cid=$(docker ps -q --filter "name=claude-safe-${CONTAINER_ID}" 2>/dev/null)
-    if [ -n "$cid" ]; then
-        echo -e "\n${YELLOW}Stopping container...${NC}"
-        docker stop "claude-safe-${CONTAINER_ID}" >/dev/null 2>&1 || true
+    if [ -n "$CONTAINER_ID" ]; then
+        local cid
+        cid=$(docker ps -q --filter "name=claude-safe-${CONTAINER_ID}" 2>/dev/null || true)
+        if [ -n "$cid" ]; then
+            echo -e "\n${YELLOW}Stopping container...${NC}"
+            docker stop "claude-safe-${CONTAINER_ID}" >/dev/null 2>&1 || true
+        fi
     fi
 
-    # Sync Claude state back to host
-    if [ -n "${ISOLATED_CLAUDE:-}" ] && [ -d "$ISOLATED_CLAUDE" ]; then
+    # Sync Claude state back to host (only if both isolated dir and host slug exist)
+    if [ -n "$ISOLATED_CLAUDE" ] && [ -d "$ISOLATED_CLAUDE" ] && [ -n "$HOST_PROJECT_NAME" ]; then
         # Map container's -workspace sessions back to the host's real project name
-        if [ -d "$ISOLATED_CLAUDE/projects/${CONTAINER_PROJECT_NAME:-}" ] && [ "$(ls -A "$ISOLATED_CLAUDE/projects/$CONTAINER_PROJECT_NAME" 2>/dev/null)" ]; then
+        if [ -d "$ISOLATED_CLAUDE/projects/$CONTAINER_PROJECT_NAME" ] && [ "$(ls -A "$ISOLATED_CLAUDE/projects/$CONTAINER_PROJECT_NAME" 2>/dev/null)" ]; then
             echo -e "${YELLOW}Saving project sessions...${NC}"
             mkdir -p "$HOME/.claude/projects/$HOST_PROJECT_NAME"
             cp -a "$ISOLATED_CLAUDE/projects/$CONTAINER_PROJECT_NAME"/. "$HOME/.claude/projects/$HOST_PROJECT_NAME/" 2>/dev/null || true
@@ -272,7 +284,9 @@ echo -e "${GREEN}✓ Created isolated Claude configuration${NC}"
 echo -e "${GREEN}✓ Project-specific session storage enabled${NC}"
 
 # Detect host Claude version (required for building the image)
-HOST_CLAUDE_VERSION=$(claude --version 2>/dev/null | grep -oP '[\d.]+' | head -1)
+# `awk` is used instead of `grep -oP` because BSD grep on macOS doesn't support -P.
+HOST_CLAUDE_VERSION=$(claude --version 2>/dev/null \
+    | awk 'match($0, /[0-9]+\.[0-9]+\.[0-9]+/) {print substr($0, RSTART, RLENGTH); exit}')
 if [ -z "$HOST_CLAUDE_VERSION" ]; then
     echo -e "${RED}Error: Could not detect host Claude version. Is 'claude' on your PATH?${NC}"
     exit 1
@@ -345,13 +359,15 @@ else
     DOCKER_ARGS+=(--entrypoint claude)
 fi
 
-# Temporarily disable exit on error for docker run
+# Temporarily disable exit on error for docker run so we can capture and
+# propagate Claude's exit code instead of bailing out before sync-back.
+# `${arr[@]+"${arr[@]}"}` keeps an empty CLAUDE_ARGS safe under bash 3.2 + set -u.
 set +e
-docker run "${DOCKER_ARGS[@]}" "$CONTAINER_IMAGE" --dangerously-skip-permissions "${CLAUDE_ARGS[@]}"
+docker run "${DOCKER_ARGS[@]}" "$CONTAINER_IMAGE" --dangerously-skip-permissions ${CLAUDE_ARGS[@]+"${CLAUDE_ARGS[@]}"}
 CONTAINER_EXIT_CODE=$?
 set -e
 
-# Warn on non-zero exit code
+# Warn on non-zero exit code; the actual exit happens after sync-back.
 if [ "$CONTAINER_EXIT_CODE" -ne 0 ]; then
     echo -e "${YELLOW}Warning: Container exited with code $CONTAINER_EXIT_CODE${NC}"
     echo -e "${YELLOW}Files may be in an inconsistent state. Review changes carefully.${NC}"
@@ -375,7 +391,7 @@ CHANGE_OUTPUT=$(rsync -avn --delete "${SYNC_EXCLUDES[@]}" "$SAFE_WORKSPACE/" "$P
 if [ -z "$CHANGE_OUTPUT" ]; then
     echo -e "${GREEN}No changes were made${NC}"
     PROJECT_SYNCED=true
-    exit 0
+    exit "$CONTAINER_EXIT_CODE"
 fi
 
 # Show changes
@@ -405,6 +421,10 @@ if [[ "$INTERACTIVE" = true ]]; then
     else
         echo -e "${YELLOW}Changes not applied to project${NC}"
         echo -e "${YELLOW}Workspace preserved at: $SAFE_WORKSPACE${NC}"
+        # Prefer Claude's exit code if it failed; otherwise signal "user declined sync"
+        if [ "$CONTAINER_EXIT_CODE" -ne 0 ]; then
+            exit "$CONTAINER_EXIT_CODE"
+        fi
         exit 1
     fi
 else
@@ -414,3 +434,5 @@ else
     PROJECT_SYNCED=true
     echo -e "${GREEN}✓ Changes applied to project (including deletions)${NC}"
 fi
+
+exit "$CONTAINER_EXIT_CODE"
