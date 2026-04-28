@@ -54,8 +54,8 @@ claude-nogit /path/to/project
 # Pass arguments to Claude
 claude-nogit -- --model opus --resume
 
-# Enable network firewall
-claude-nogit --firewall
+# Disable the (default-on) network firewall
+claude-nogit --no-firewall
 ```
 
 That's it. Claude launches with `--dangerously-skip-permissions` inside the container, does its work, and changes sync back automatically when it exits.
@@ -90,7 +90,7 @@ That's it. Claude launches with `--dangerously-skip-permissions` inside the cont
 
 - 🔒 **Git isolation** -- `.git` never enters the container; your history is untouchable
 - 💬 **Session persistence** -- Resume conversations across runs with `-- --resume`
-- 🛡️ **Network firewall** -- `--firewall` restricts traffic to Anthropic API, GitHub, and npm only
+- 🛡️ **Network firewall** -- enabled by default; restricts traffic to Anthropic API, GitHub, and npm. Pass `--no-firewall` to disable.
 - 🔄 **Auto-rebuild** -- Docker image rebuilds automatically when your local Claude version updates
 - 📦 **Lightweight image** -- `debian:bookworm-slim` with native Claude binary (~591MB vs ~1.4GB with Node.js)
 - 🚫 **`.gitignore` aware** -- Skips files your project already ignores
@@ -100,11 +100,14 @@ That's it. Claude launches with `--dangerously-skip-permissions` inside the cont
 
 | Flag | Description |
 |------|-------------|
-| `--firewall` | Restrict network to Anthropic, GitHub, npm only |
+| `--firewall` | (default) Restrict network to Anthropic API, GitHub, and npm |
+| `--no-firewall` | Disable the firewall — unrestricted network access |
+| `--network NAME` | Connect the container to an existing Docker network (e.g. for databases) |
 | `--full` | Include `node_modules`, `.venv`, etc. (excluded by default for speed) |
 | `--show-diff` | Display diff before syncing changes back |
 | `--interactive` | Prompt before copying changes back |
 | `--rebuild` | Force Docker image rebuild |
+| `--purge-sessions` | Delete saved session/todo data for the project and exit |
 | `-h, --help` | Show help |
 | `-- [args]` | Pass remaining arguments to Claude |
 
@@ -114,8 +117,8 @@ That's it. Claude launches with `--dangerously-skip-permissions` inside the cont
 # Let Claude fix all tests with full autonomy
 claude-nogit -- -p "fix all failing tests"
 
-# Network-restricted session on a specific project
-claude-nogit --firewall /path/to/project
+# Trusted project — disable the firewall for unrestricted network access
+claude-nogit --no-firewall /path/to/project
 
 # Review changes before they apply
 claude-nogit --show-diff
