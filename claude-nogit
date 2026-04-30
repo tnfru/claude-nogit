@@ -363,7 +363,7 @@ fi
 # propagate Claude's exit code instead of bailing out before sync-back.
 # `${arr[@]+"${arr[@]}"}` keeps an empty CLAUDE_ARGS safe under bash 3.2 + set -u.
 set +e
-docker run "${DOCKER_ARGS[@]}" "$CONTAINER_IMAGE" --dangerously-skip-permissions ${CLAUDE_ARGS[@]+"${CLAUDE_ARGS[@]}"}
+docker run "${DOCKER_ARGS[@]}" "$CONTAINER_IMAGE" --dangerously-skip-permissions --model 'claude-opus-4-6[1m]' ${CLAUDE_ARGS[@]+"${CLAUDE_ARGS[@]}"}
 CONTAINER_EXIT_CODE=$?
 set -e
 
