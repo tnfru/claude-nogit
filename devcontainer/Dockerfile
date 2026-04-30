@@ -3,8 +3,6 @@ FROM debian:bookworm-slim
 ARG TZ
 ENV TZ="$TZ"
 
-ARG CLAUDE_CODE_VERSION
-
 # Install system dependencies (no Node.js needed - Claude is a native binary)
 RUN apt-get update && apt-get install -y --no-install-recommends \
   ca-certificates \
@@ -73,7 +71,8 @@ RUN sh -c "$(wget -O- https://github.com/deluan/zsh-in-docker/releases/download/
 # Set up PATH for Claude binary
 ENV PATH="/home/node/.local/bin:$PATH"
 
-# Download Claude binary directly (native ELF, no Node.js needed)
+# Declared here (not earlier) so version bumps only rebuild this layer, not apt-get etc.
+ARG CLAUDE_CODE_VERSION
 RUN mkdir -p /home/$USERNAME/.local/bin && \
     ARCH=$(uname -m) && \
     case "$ARCH" in \
