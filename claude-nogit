@@ -344,6 +344,15 @@ DOCKER_ARGS=(
     -w /workspace
 )
 
+# Pass through PipeWire socket for audio notifications (hook sounds)
+PIPEWIRE_SOCK="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/pipewire-0"
+if [ -S "$PIPEWIRE_SOCK" ]; then
+    DOCKER_ARGS+=(
+        -v "$PIPEWIRE_SOCK:/run/user/1000/pipewire-0"
+        -e XDG_RUNTIME_DIR=/run/user/1000
+    )
+fi
+
 if [ -f "$HOME/.claude.json" ]; then
     DOCKER_ARGS+=(-v "$HOME/.claude.json:/home/node/.claude.json")
 fi

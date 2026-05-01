@@ -28,6 +28,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   nano \
   vim \
   rsync \
+  pipewire \
+  sound-theme-freedesktop \
   && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user (named 'node' for mount path compatibility)
@@ -41,9 +43,9 @@ RUN mkdir /commandhistory && \
 
 ENV DEVCONTAINER=true
 
-# Create workspace and config directories
-RUN mkdir -p /workspace /home/$USERNAME/.claude && \
-    chown -R $USERNAME:$USERNAME /workspace /home/$USERNAME/.claude
+# Create workspace, config, and runtime directories
+RUN mkdir -p /workspace /home/$USERNAME/.claude /run/user/1000 && \
+    chown -R $USERNAME:$USERNAME /workspace /home/$USERNAME/.claude /run/user/1000
 
 WORKDIR /workspace
 
