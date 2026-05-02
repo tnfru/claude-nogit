@@ -17,6 +17,7 @@ INTERACTIVE=false
 SHOW_DIFF=false
 FORCE_REBUILD=false
 USE_FIREWALL=true
+USE_DOCKER=false
 PURGE_SESSIONS=false
 DOCKER_NETWORK=""
 PROJECT_DIR=""
@@ -58,6 +59,10 @@ while [[ $# -gt 0 ]]; do
             USE_FIREWALL=false
             shift
             ;;
+        --docker)
+            USE_DOCKER=true
+            shift
+            ;;
         --network)
             DOCKER_NETWORK="$2"
             shift 2
@@ -77,6 +82,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --rebuild          Force Docker image rebuild"
             echo "  --firewall         (default) Restrict network to Anthropic API, GitHub, and npm"
             echo "  --no-firewall      Disable the firewall (unrestricted network access)"
+            echo "  --docker            Mount Docker socket (lets Claude spin up sibling containers)"
             echo "  --network NAME     Connect container to a Docker network (e.g. for databases)"
             echo "  --purge-sessions   Delete all session data for the given project and exit"
             echo "  -h, --help         Show help"
@@ -165,6 +171,10 @@ cleanup() {
             echo -e "${YELLOW}Saving project sessions...${NC}"
             mkdir -p "$HOME/.claude/projects/$HOST_PROJECT_NAME"
             cp -a "$ISOLATED_CLAUDE/projects/$CONTAINER_PROJECT_NAME"/. "$HOME/.claude/projects/$HOST_PROJECT_NAME/" 2>/dev/null || true
+            # Rewrite cwd from /workspace back to host path so --resume works on host
+            find "$HOME/.claude/projects/$HOST_PROJECT_NAME" -name "*.jsonl" 2>/dev/null | while read -r f; do
+                sed 's|"cwd": "/workspace"|"cwd": "'"$PROJECT_DIR"'"|g' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+            done
         fi
         # Sync sessions
         if [ -d "$ISOLATED_CLAUDE/sessions" ] && [ "$(ls -A "$ISOLATED_CLAUDE/sessions" 2>/dev/null)" ]; then
@@ -266,6 +276,10 @@ mkdir -p "$ISOLATED_CLAUDE/sessions"
 if [ -d "$HOME/.claude/projects/$HOST_PROJECT_NAME" ] && [ "$(ls -A "$HOME/.claude/projects/$HOST_PROJECT_NAME" 2>/dev/null)" ]; then
     echo -e "${YELLOW}Loading existing project sessions...${NC}"
     cp -a "$HOME/.claude/projects/$HOST_PROJECT_NAME"/. "$ISOLATED_CLAUDE/projects/$CONTAINER_PROJECT_NAME/"
+    # Rewrite cwd from host path to /workspace so --resume works inside container
+    find "$ISOLATED_CLAUDE/projects/$CONTAINER_PROJECT_NAME" -name "*.jsonl" 2>/dev/null | while read -r f; do
+        sed "s|\"cwd\": \"$PROJECT_DIR\"|\"cwd\": \"/workspace\"|g" "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+    done
 else
     echo -e "${YELLOW}No existing sessions found for this project${NC}"
 fi
@@ -321,6 +335,21 @@ if [ "$NEEDS_BUILD" = true ]; then
     fi
 fi
 
+# Resolve Docker socket mount before printing status
+DOCKER_SOCK="/var/run/docker.sock"
+if [ "$USE_DOCKER" = true ]; then
+    if [ ! -S "$DOCKER_SOCK" ]; then
+        echo -e "${RED}Error: Docker socket not found at $DOCKER_SOCK${NC}"
+        exit 1
+    fi
+    # Detect GID of the socket so the container user can access it without root
+    if stat --version >/dev/null 2>&1; then
+        DOCKER_GID=$(stat -c '%g' "$DOCKER_SOCK")
+    else
+        DOCKER_GID=$(stat -f '%g' "$DOCKER_SOCK")
+    fi
+fi
+
 # Run container
 echo -e "${GREEN}Starting Claude container...${NC}"
 echo -e "${YELLOW}You're now in a safe environment. The .git folder is not accessible.${NC}"
@@ -329,6 +358,12 @@ if [ "$USE_FIREWALL" = true ]; then
     echo -e "${GREEN}Network firewall enabled (only Anthropic, GitHub, npm allowed)${NC}"
 else
     echo -e "${RED}Warning: Firewall disabled (--no-firewall). Claude has unrestricted network access.${NC}"
+fi
+if [ "$USE_DOCKER" = true ]; then
+    echo -e "${GREEN}Docker socket mounted (Claude can manage sibling containers)${NC}"
+    if [ "$USE_FIREWALL" = true ]; then
+        echo -e "${YELLOW}Note: Firewall applies to this container only, not to containers Claude spawns${NC}"
+    fi
 fi
 echo
 
@@ -359,6 +394,10 @@ fi
 
 if [ -n "$DOCKER_NETWORK" ]; then
     DOCKER_ARGS+=(--network "$DOCKER_NETWORK")
+fi
+
+if [ "$USE_DOCKER" = true ]; then
+    DOCKER_ARGS+=(-v "$DOCKER_SOCK:/var/run/docker.sock" --group-add "$DOCKER_GID")
 fi
 
 if [ "$USE_FIREWALL" = true ]; then
