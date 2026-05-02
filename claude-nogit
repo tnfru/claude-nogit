@@ -16,7 +16,7 @@ FULL_COPY=false
 INTERACTIVE=false
 SHOW_DIFF=false
 FORCE_REBUILD=false
-USE_FIREWALL=true
+USE_FIREWALL=false
 USE_DOCKER=false
 PURGE_SESSIONS=false
 DOCKER_NETWORK=""
@@ -80,8 +80,8 @@ while [[ $# -gt 0 ]]; do
             echo "  --interactive      Prompt before copying changes back"
             echo "  --show-diff        Show diff review before auto-copying"
             echo "  --rebuild          Force Docker image rebuild"
-            echo "  --firewall         (default) Restrict network to Anthropic API, GitHub, and npm"
-            echo "  --no-firewall      Disable the firewall (unrestricted network access)"
+            echo "  --firewall         Restrict network to Anthropic API, GitHub, and npm"
+            echo "  --no-firewall      (default) Unrestricted network access"
             echo "  --docker            Mount Docker socket (lets Claude spin up sibling containers)"
             echo "  --network NAME     Connect container to a Docker network (e.g. for databases)"
             echo "  --purge-sessions   Delete all session data for the given project and exit"
