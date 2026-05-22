@@ -1,11 +1,11 @@
-# gitjail
+# autobox
 
 Docker isolation wrapper for Claude Code. Creates a git worktree on a new branch, mounts it into a container with `.git` hidden behind a tmpfs, runs Claude with `--dangerously-skip-permissions`. Changes are written directly to disk — no sync needed.
 
 ## Architecture
 
 ```
-gitjail (bash)               Entry point. Arg parsing, worktree creation, Docker orchestration.
+autobox (bash)               Entry point. Arg parsing, worktree creation, Docker orchestration.
 devcontainer/
   Dockerfile                 debian:bookworm-slim + native Claude binary. No Node.js.
   entrypoint.sh              Firewall init + throwaway git init on tmpfs, then exec's claude.
@@ -29,7 +29,7 @@ Everything is bash. There is no build system, no package manager, no test framew
 
 ### Shell conventions
 
-All scripts use `set -euo pipefail`. The main script (`gitjail`) temporarily disables `set -e` around `docker run` to capture exit codes. Arrays are used for argument building — no `eval` or string concatenation.
+All scripts use `set -euo pipefail`. The main script (`autobox`) temporarily disables `set -e` around `docker run` to capture exit codes. Arrays are used for argument building — no `eval` or string concatenation.
 
 Color output: `GREEN` for success, `YELLOW` for warnings/progress, `RED` for errors. Use `echo -e` with `$NC` reset.
 
@@ -39,28 +39,28 @@ There is no automated test suite. Test manually:
 
 ```bash
 # Basic run (current directory)
-./gitjail
+./autobox
 
 # With firewall
-./gitjail --firewall
+./autobox --firewall
 
 # Without firewall
-./gitjail --no-firewall
+./autobox --no-firewall
 
 # Verify worktree is created and changes persist
-./gitjail --no-continue
-git -C /tmp/gitjail-* status
+./autobox --no-continue
+git -C /tmp/autobox-* status
 
 # Verify firewall blocks non-allowlisted traffic
 # (init-firewall.sh has a built-in curl to example.com that must fail)
 
 # Verify session persistence
-./gitjail -- --resume
+./autobox -- --resume
 ```
 
 ### Docker image
 
-- Image name: `gitjail-dev`
+- Image name: `autobox-dev`
 - Build arg `CLAUDE_CODE_VERSION` is detected from host's `claude --version`
 - Image label `claude.version` tracks the version; mismatch triggers auto-rebuild
 - `--rebuild` flag forces a no-cache rebuild

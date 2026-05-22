@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# gitjail - Run Claude Code in a safe container without git access
-# Usage: gitjail [options] [project-directory] [-- claude-args...]
+# autobox - Run Claude Code in a safe container without git access
+# Usage: autobox [options] [project-directory] [-- claude-args...]
 
 set -euo pipefail
 
@@ -73,8 +73,8 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         -h|--help)
-            echo "gitjail - Run Claude Code in a safe container without git access"
-            echo "Usage: gitjail [options] [project-directory] [-- claude-args...]"
+            echo "autobox - Run Claude Code in a safe container without git access"
+            echo "Usage: autobox [options] [project-directory] [-- claude-args...]"
             echo ""
             echo "Options:"
             echo "  --full             Include node_modules/.venv in the worktree"
@@ -89,7 +89,7 @@ while [[ $# -gt 0 ]]; do
             echo "  -h, --help         Show help"
             echo ""
             echo "Arguments after -- are passed directly to Claude:"
-            echo "  gitjail /path/to/project -- --model opus --resume"
+            echo "  autobox /path/to/project -- --model opus --resume"
             echo ""
             echo "Creates a git worktree on a new branch, mounts it into a Docker"
             echo "container with .git hidden. Changes are written directly to disk."
@@ -125,7 +125,7 @@ if [ "$PURGE_SESSIONS" = true ]; then
     exit 0
 fi
 
-CONTAINER_IMAGE="gitjail-dev"
+CONTAINER_IMAGE="autobox-dev"
 
 # Resolve devcontainer directory: prefer repo-local, fall back to ~/.claude/devcontainer
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -151,9 +151,9 @@ fi
 
 # Generate unique IDs
 CONTAINER_ID="$$-$(date +%s)"
-BRANCH_NAME="agent/gitjail-$(date +%Y%m%d-%H%M%S)"
-WORKTREE_DIR="/tmp/gitjail-$$-$(date +%s)"
-ISOLATED_CLAUDE="/tmp/gitjail-claude-$$"
+BRANCH_NAME="agent/autobox-$(date +%Y%m%d-%H%M%S)"
+WORKTREE_DIR="/tmp/autobox-$$-$(date +%s)"
+ISOLATED_CLAUDE="/tmp/autobox-claude-$$"
 
 sync_sessions_to_host() {
     if [ "$SESSIONS_SYNCED" = true ]; then return; fi
@@ -220,10 +220,10 @@ cleanup() {
     # If container is still running, stop it
     if [ -n "$CONTAINER_ID" ]; then
         local cid
-        cid=$(docker ps -q --filter "name=gitjail-${CONTAINER_ID}" 2>/dev/null || true)
+        cid=$(docker ps -q --filter "name=autobox-${CONTAINER_ID}" 2>/dev/null || true)
         if [ -n "$cid" ]; then
             echo -e "\n${YELLOW}Stopping container...${NC}"
-            docker stop "gitjail-${CONTAINER_ID}" >/dev/null 2>&1 || true
+            docker stop "autobox-${CONTAINER_ID}" >/dev/null 2>&1 || true
         fi
     fi
 
@@ -256,7 +256,7 @@ cleanup() {
 # Set up signal handlers
 trap cleanup SIGINT SIGTERM EXIT
 
-echo -e "${GREEN}=== gitjail ===${NC}"
+echo -e "${GREEN}=== autobox ===${NC}"
 echo -e "Project: $PROJECT_DIR"
 echo -e "Worktree: $WORKTREE_DIR"
 echo -e "Branch: $BRANCH_NAME"
@@ -269,7 +269,7 @@ echo -e "${GREEN}✓ Worktree created on branch $BRANCH_NAME${NC}"
 
 # Replace .git file with empty directory so Docker can mount tmpfs over it
 # (worktree .git is a file pointing to the main repo — tmpfs needs a directory)
-GITFILE_BACKUP="/tmp/gitjail-gitfile-$$"
+GITFILE_BACKUP="/tmp/autobox-gitfile-$$"
 cp "$WORKTREE_DIR/.git" "$GITFILE_BACKUP"
 rm "$WORKTREE_DIR/.git"
 mkdir "$WORKTREE_DIR/.git"
@@ -370,7 +370,7 @@ if [ "$NEEDS_BUILD" = true ]; then
         fi
         docker build -t "$CONTAINER_IMAGE" "${BUILD_ARGS[@]}" "$DEVCONTAINER_DIR/"
     else
-        echo -e "${RED}Error: Cannot find Dockerfile. Run from the gitjail repo or place Dockerfile at ~/.claude/devcontainer/Dockerfile${NC}"
+        echo -e "${RED}Error: Cannot find Dockerfile. Run from the autobox repo or place Dockerfile at ~/.claude/devcontainer/Dockerfile${NC}"
         exit 1
     fi
 fi
@@ -409,7 +409,7 @@ echo
 # Build docker run arguments
 DOCKER_ARGS=(
     -it --rm
-    --name "gitjail-${CONTAINER_ID}"
+    --name "autobox-${CONTAINER_ID}"
     -v "$WORKTREE_DIR:/workspace"
     --tmpfs /workspace/.git:rw,exec,uid=1000,gid=1000
     -v "$ISOLATED_CLAUDE:/home/node/.claude"

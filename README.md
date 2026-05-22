@@ -1,4 +1,4 @@
-# gitjail
+# autobox
 
 ### 🐳 Run Claude Code autonomously. Keep your git history safe.
 
@@ -32,15 +32,15 @@ Give Claude `--dangerously-skip-permissions` without the danger. Your `.git` nev
 ## 📦 Installation
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/tnfru/gitjail/master/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/tnfru/autobox/master/install.sh | bash
 ```
 
 <details>
 <summary>Manual install</summary>
 
 ```bash
-git clone https://github.com/tnfru/gitjail.git
-cp gitjail/gitjail ~/.local/bin/
+git clone https://github.com/tnfru/autobox.git
+cp autobox/autobox ~/.local/bin/
 # Ensure ~/.local/bin is in your PATH
 ```
 
@@ -51,10 +51,10 @@ cp gitjail/gitjail ~/.local/bin/
 ## 🚀 Quick Start
 
 ```bash
-gitjail                              # run in current directory
-gitjail /path/to/project             # run on a specific project
-gitjail -- -p "fix all failing tests" # give Claude a task directly
-gitjail -- --resume                  # resume a previous conversation
+autobox                              # run in current directory
+autobox /path/to/project             # run on a specific project
+autobox -- -p "fix all failing tests" # give Claude a task directly
+autobox -- --resume                  # resume a previous conversation
 ```
 
 ## ⚙️ Options
@@ -74,7 +74,7 @@ gitjail -- --resume                  # resume a previous conversation
 
 ## 🔎 How It Compares
 
-| | gitjail | Bare `--dangerously-skip-permissions` | Process-level sandboxes |
+| | autobox | Bare `--dangerously-skip-permissions` | Process-level sandboxes |
 |---|---|---|---|
 | **Git safety** | `.git` hidden behind tmpfs | `.git` fully writable | `.git` writable (within project dir) |
 | **Network control** | Firewall allowlist | Unrestricted | Varies |
@@ -87,22 +87,22 @@ gitjail -- --resume                  # resume a previous conversation
 
 ```bash
 # Let Claude fix all tests autonomously, then review in worktree
-gitjail -- -p "fix all failing tests"
+autobox -- -p "fix all failing tests"
 
 # Resume a previous conversation
-gitjail -- --resume
+autobox -- --resume
 
 # Restrict network access
-gitjail --firewall
+autobox --firewall
 
 # Connect to a local database
-gitjail --network my-network
+autobox --network my-network
 
 # Let Claude spin up sibling containers
-gitjail --docker
+autobox --docker
 
 # Include dependencies in the worktree
-gitjail --full
+autobox --full
 ```
 
 ## 🔁 The Workflow
@@ -137,7 +137,7 @@ gitjail --full
   │                                            ├── package.json
   │   git worktree add                         └── ...
   │        ↓
-  │   /tmp/gitjail-*/    ─── bind mount ───>   .git is a tmpfs (hidden)
+  │   /tmp/autobox-*/    ─── bind mount ───>   .git is a tmpfs (hidden)
   │   (new branch)                             throwaway git init for
   │                                            git diff baseline
   │
@@ -189,10 +189,10 @@ Outbound traffic to Anthropic API, GitHub (IPs from their `/meta` endpoint), npm
 <summary><strong>How do I clean up a worktree?</strong></summary>
 
 ```bash
-git worktree remove /tmp/gitjail-*
+git worktree remove /tmp/autobox-*
 ```
 
-If the worktree has no changes, gitjail cleans it up automatically.
+If the worktree has no changes, autobox cleans it up automatically.
 </details>
 
 ## 🙏 Contributing
