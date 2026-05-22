@@ -20,9 +20,10 @@ Everything is bash. There is no build system, no package manager, no test framew
 - **rsync, not bind mount**: The project is copied to a temp dir, not mounted. This is the core safety guarantee — `.git` is physically absent from the container.
 - **Throwaway git repo**: A fresh `git init` + `git commit` inside the temp copy creates a `baseline` tag so Claude can `git diff baseline` to see its own changes.
 - **Session mapping**: Host project path is slugified (`/home/lars/code/foo` → `-home-lars-code-foo`). Container always sees `/workspace`, so sessions are stored under `-workspace` and remapped on sync-back.
-- **Firewall by default**: `--cap-add=NET_ADMIN` + iptables. GitHub IPs fetched from `api.github.com/meta` at container startup. Other domains resolved via DNS and added to an ipset. IPv6 rejected outright.
+- **Firewall opt-in**: `--firewall` enables `--cap-add=NET_ADMIN` + iptables. GitHub IPs fetched from `api.github.com/meta` at container startup. Other domains resolved via DNS and added to an ipset. IPv6 rejected outright. Off by default (`--no-firewall`).
 - **Native binary, not npm**: Claude is downloaded as a platform binary during `docker build`, not installed via npm. Cuts image size from ~1.4GB to ~591MB.
-- **Signal handling**: `cleanup()` traps SIGINT/SIGTERM/EXIT. Syncs sessions back, preserves workspace in `/tmp` on failure for manual recovery.
+- **Host-side resume**: `--continue` (default) syncs sessions back and `exec`s `claude --resume` on the host with normal permissions after the container exits. Session sync is extracted into `sync_sessions_to_host()` with a guard to prevent double-sync.
+- **Signal handling**: `cleanup()` traps SIGINT/SIGTERM/EXIT. Calls `sync_sessions_to_host()`, preserves workspace in `/tmp` on failure for manual recovery.
 
 ## Working on this codebase
 
@@ -69,7 +70,7 @@ Edit `devcontainer/init-firewall.sh`. Add domains to the `for domain in ...` loo
 
 ### Sync-back logic
 
-The rsync filters in `claude-nogit` are duplicated in two places: the initial copy (line ~222) and the sync-back (line ~381). Keep them in sync. Both use `--filter=':- .gitignore'` for per-directory .gitignore support.
+The rsync filters in `claude-nogit` are duplicated in two places: the initial copy and the sync-back (`SYNC_EXCLUDES`). Keep them in sync. Both use `--filter=':- .gitignore'` for per-directory .gitignore support.
 
 ### Common pitfalls
 
