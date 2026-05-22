@@ -32,6 +32,8 @@ CONTAINER_PROJECT_NAME="-workspace"
 CONTAINER_ID=""
 CONTAINER_EXIT_CODE=0
 PROJECT_SYNCED=false
+CONTINUE_ON_HOST=true
+SESSIONS_SYNCED=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -71,6 +73,14 @@ while [[ $# -gt 0 ]]; do
             PURGE_SESSIONS=true
             shift
             ;;
+        --continue)
+            CONTINUE_ON_HOST=true
+            shift
+            ;;
+        --no-continue)
+            CONTINUE_ON_HOST=false
+            shift
+            ;;
         -h|--help)
             echo "claude-nogit - Run Claude Code in a safe container without git access"
             echo "Usage: claude-nogit [options] [project-directory] [-- claude-args...]"
@@ -85,6 +95,8 @@ while [[ $# -gt 0 ]]; do
             echo "  --docker            Mount Docker socket (lets Claude spin up sibling containers)"
             echo "  --network NAME     Connect container to a Docker network (e.g. for databases)"
             echo "  --purge-sessions   Delete all session data for the given project and exit"
+            echo "  --continue         (default) After sync-back, resume session on host (normal permissions)"
+            echo "  --no-continue      Exit after sync-back instead of resuming"
             echo "  -h, --help         Show help"
             echo ""
             echo "Arguments after -- are passed directly to Claude:"
@@ -147,6 +159,44 @@ fi
 # Generate unique container ID (PID + timestamp to avoid collisions)
 CONTAINER_ID="$$-$(date +%s)"
 
+sync_sessions_to_host() {
+    if [ "$SESSIONS_SYNCED" = true ]; then return; fi
+    SESSIONS_SYNCED=true
+
+    if [ -n "$ISOLATED_CLAUDE" ] && [ -d "$ISOLATED_CLAUDE" ] && [ -n "$HOST_PROJECT_NAME" ]; then
+        if [ -d "$ISOLATED_CLAUDE/projects/$CONTAINER_PROJECT_NAME" ] && [ "$(ls -A "$ISOLATED_CLAUDE/projects/$CONTAINER_PROJECT_NAME" 2>/dev/null)" ]; then
+            echo -e "${YELLOW}Saving project sessions...${NC}"
+            mkdir -p "$HOME/.claude/projects/$HOST_PROJECT_NAME"
+            cp -a "$ISOLATED_CLAUDE/projects/$CONTAINER_PROJECT_NAME"/. "$HOME/.claude/projects/$HOST_PROJECT_NAME/" 2>/dev/null || true
+            find "$HOME/.claude/projects/$HOST_PROJECT_NAME" -name "*.jsonl" 2>/dev/null | while read -r f; do
+                sed 's|"cwd": "/workspace"|"cwd": "'"$PROJECT_DIR"'"|g' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+            done
+        fi
+        if [ -d "$ISOLATED_CLAUDE/sessions" ] && [ "$(ls -A "$ISOLATED_CLAUDE/sessions" 2>/dev/null)" ]; then
+            echo -e "${YELLOW}Saving sessions...${NC}"
+            mkdir -p "$HOME/.claude/sessions"
+            cp -a "$ISOLATED_CLAUDE/sessions"/. "$HOME/.claude/sessions/" 2>/dev/null || true
+        fi
+        if [ -d "$ISOLATED_CLAUDE/todos" ] && [ "$(ls -A "$ISOLATED_CLAUDE/todos" 2>/dev/null)" ]; then
+            echo -e "${YELLOW}Saving todos...${NC}"
+            mkdir -p "$HOME/.claude/todos"
+            cp -a "$ISOLATED_CLAUDE/todos"/. "$HOME/.claude/todos/" 2>/dev/null || true
+        fi
+    fi
+}
+
+maybe_continue_on_host() {
+    if [ "$CONTINUE_ON_HOST" = true ]; then
+        sync_sessions_to_host
+        rm -rf "$SAFE_WORKSPACE" 2>/dev/null || true
+        trap - SIGINT SIGTERM EXIT
+        echo
+        echo -e "${GREEN}Resuming session on host (with normal permissions)...${NC}"
+        cd "$PROJECT_DIR"
+        exec claude --resume
+    fi
+}
+
 # Cleanup function for proper signal handling
 cleanup() {
     local exit_code=$?
@@ -164,31 +214,7 @@ cleanup() {
         fi
     fi
 
-    # Sync Claude state back to host (only if both isolated dir and host slug exist)
-    if [ -n "$ISOLATED_CLAUDE" ] && [ -d "$ISOLATED_CLAUDE" ] && [ -n "$HOST_PROJECT_NAME" ]; then
-        # Map container's -workspace sessions back to the host's real project name
-        if [ -d "$ISOLATED_CLAUDE/projects/$CONTAINER_PROJECT_NAME" ] && [ "$(ls -A "$ISOLATED_CLAUDE/projects/$CONTAINER_PROJECT_NAME" 2>/dev/null)" ]; then
-            echo -e "${YELLOW}Saving project sessions...${NC}"
-            mkdir -p "$HOME/.claude/projects/$HOST_PROJECT_NAME"
-            cp -a "$ISOLATED_CLAUDE/projects/$CONTAINER_PROJECT_NAME"/. "$HOME/.claude/projects/$HOST_PROJECT_NAME/" 2>/dev/null || true
-            # Rewrite cwd from /workspace back to host path so --resume works on host
-            find "$HOME/.claude/projects/$HOST_PROJECT_NAME" -name "*.jsonl" 2>/dev/null | while read -r f; do
-                sed 's|"cwd": "/workspace"|"cwd": "'"$PROJECT_DIR"'"|g' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
-            done
-        fi
-        # Sync sessions
-        if [ -d "$ISOLATED_CLAUDE/sessions" ] && [ "$(ls -A "$ISOLATED_CLAUDE/sessions" 2>/dev/null)" ]; then
-            echo -e "${YELLOW}Saving sessions...${NC}"
-            mkdir -p "$HOME/.claude/sessions"
-            cp -a "$ISOLATED_CLAUDE/sessions"/. "$HOME/.claude/sessions/" 2>/dev/null || true
-        fi
-        # Sync todos
-        if [ -d "$ISOLATED_CLAUDE/todos" ] && [ "$(ls -A "$ISOLATED_CLAUDE/todos" 2>/dev/null)" ]; then
-            echo -e "${YELLOW}Saving todos...${NC}"
-            mkdir -p "$HOME/.claude/todos"
-            cp -a "$ISOLATED_CLAUDE/todos"/. "$HOME/.claude/todos/" 2>/dev/null || true
-        fi
-    fi
+    sync_sessions_to_host
 
     # If project files weren't synced back yet, preserve the workspace for recovery
     if [ "$PROJECT_SYNCED" = false ] && [ -n "${SAFE_WORKSPACE:-}" ] && [ -d "$SAFE_WORKSPACE" ]; then
@@ -439,6 +465,7 @@ CHANGE_OUTPUT=$(rsync -avn --delete "${SYNC_EXCLUDES[@]}" "$SAFE_WORKSPACE/" "$P
 if [ -z "$CHANGE_OUTPUT" ]; then
     echo -e "${GREEN}No changes were made${NC}"
     PROJECT_SYNCED=true
+    maybe_continue_on_host
     exit "$CONTAINER_EXIT_CODE"
 fi
 
@@ -483,4 +510,5 @@ else
     echo -e "${GREEN}✓ Changes applied to project (including deletions)${NC}"
 fi
 
+maybe_continue_on_host
 exit "$CONTAINER_EXIT_CODE"
