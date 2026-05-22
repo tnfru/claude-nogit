@@ -9,6 +9,26 @@
 
 Give Claude `--dangerously-skip-permissions` without the danger. Your `.git` never enters the container — Claude gets full autonomy over your code, but can't touch your history, force-push, or delete branches. When it's done, you resume the same conversation on your host to review everything it did.
 
+## ✨ Features
+
+- 🔒 **Git Isolation** — `.git` is physically absent from the container; your history is untouchable
+- 🔁 **Session Continuity** — Claude resumes on your host after sync-back for seamless review
+- 🛡️ **Network Firewall** — Optional allowlist restricting traffic to Anthropic, GitHub, npm, and PyPI
+- 🐳 **Docker Socket** — Let Claude manage sibling containers with `--docker`
+- 🔄 **Auto-Rebuild** — Docker image rebuilds automatically when your local Claude version updates
+- 📦 **Lightweight Image** — `debian:bookworm-slim` with native Claude binary (~591MB vs ~1.4GB with Node.js)
+
+## 🛡️ What's Protected
+
+| | Threat | Protection |
+|---|--------|------------|
+| 🔨 | `git push --force` | `.git` is physically absent from the container |
+| 💥 | `git reset --hard` | No git history to reset |
+| ✏️ | Rewrite commit history | No commits to rewrite |
+| 🗑️ | Delete branches | No branches to delete |
+| 🌐 | Exfiltrate code via network | Firewall restricts traffic to Anthropic, GitHub, npm, and PyPI |
+| 📂 | Modify files outside project | Container filesystem isolation |
+
 ## 📦 Installation
 
 ```bash
@@ -31,23 +51,60 @@ cp claude-nogit/claude-nogit ~/.local/bin/
 ## 🚀 Quick Start
 
 ```bash
-claude-nogit
+claude-nogit                              # run in current directory
+claude-nogit /path/to/project             # run on a specific project
+claude-nogit -- -p "fix all failing tests" # give Claude a task directly
+claude-nogit -- --resume                  # resume a previous conversation
 ```
 
-That's it. Claude launches with full autonomy inside a container, does its work, syncs changes back, and resumes the session on your host so you can review what it did.
+## ⚙️ Options
+
+| Flag | Description |
+|------|-------------|
+| `--continue` | (default) After sync-back, resume the session on host with normal permissions |
+| `--no-continue` | Exit after sync-back instead of resuming |
+| `--firewall` | Restrict outbound traffic to Anthropic API, GitHub, npm, and PyPI |
+| `--no-firewall` | (default) Unrestricted network access |
+| `--docker` | Mount Docker socket (lets Claude manage sibling containers) |
+| `--network NAME` | Connect to a Docker network (e.g. for databases) |
+| `--full` | Include `node_modules`, `.venv`, etc. (excluded by default for speed) |
+| `--show-diff` | Display diff before syncing changes back |
+| `--interactive` | Prompt before copying changes back |
+| `--rebuild` | Force Docker image rebuild |
+| `--purge-sessions` | Delete saved session/todo data for the project |
+| `-- [args]` | Pass remaining arguments to Claude |
+
+## 🔎 How It Compares
+
+| | claude-nogit | Bare `--dangerously-skip-permissions` | [Agent Safehouse](https://agent-safehouse.dev/) |
+|---|---|---|---|
+| **Git safety** | `.git` physically absent | `.git` fully writable | `.git` writable (within project dir) |
+| **Network control** | Firewall allowlist | Unrestricted | No network isolation |
+| **Blast radius** | Container only | Entire system | Project directory |
+| **Session continuity** | Resumes on host after sync | N/A | Native |
+| **Platform** | Linux, macOS (Docker) | Any | macOS only |
+| **Overhead** | Container startup + rsync | None | Near zero |
+
+## 📖 Examples
 
 ```bash
-# Run on a specific project
-claude-nogit /path/to/project
-
-# Give Claude a task directly
+# Let Claude fix all tests autonomously, then review on host
 claude-nogit -- -p "fix all failing tests"
 
 # Resume a previous conversation
 claude-nogit -- --resume
 
-# Enable network firewall (Anthropic, GitHub, npm, PyPI only)
+# Review changes before they apply
+claude-nogit --interactive
+
+# Restrict network access
 claude-nogit --firewall
+
+# Connect to a local database
+claude-nogit --network my-network
+
+# Let Claude spin up sibling containers
+claude-nogit --docker
 ```
 
 ## 🔁 The Workflow
@@ -75,26 +132,6 @@ Most sandboxing tools are batch jobs — run the agent, get results, start a new
 
 The `--continue` flag (on by default) automatically resumes the session on your host after sync-back. Use `--no-continue` to exit instead.
 
-## 🛡️ What's Protected
-
-| | Threat | Protection |
-|---|--------|------------|
-| 🔨 | `git push --force` | `.git` is physically absent from the container |
-| 💥 | `git reset --hard` | No git history to reset |
-| ✏️ | Rewrite commit history | No commits to rewrite |
-| 🗑️ | Delete branches | No branches to delete |
-| 🌐 | Exfiltrate code via network | Firewall restricts traffic to Anthropic, GitHub, npm, and PyPI |
-| 📂 | Modify files outside project | Container filesystem isolation |
-
-## ✨ Features
-
-- 🔒 **Git Isolation** — `.git` is physically absent from the container; your history is untouchable
-- 🔁 **Session Continuity** — Claude resumes on your host after sync-back for seamless review
-- 🛡️ **Network Firewall** — Optional allowlist restricting traffic to Anthropic, GitHub, npm, and PyPI
-- 🐳 **Docker Socket** — Let Claude manage sibling containers with `--docker`
-- 🔄 **Auto-Rebuild** — Docker image rebuilds automatically when your local Claude version updates
-- 📦 **Lightweight Image** — `debian:bookworm-slim` with native Claude binary (~591MB vs ~1.4GB with Node.js)
-
 ## 🔬 How It Works
 
 ```
@@ -120,56 +157,6 @@ The `--continue` flag (on by default) automatically resumes the session on your 
 3. 🚀 **Run** — Claude starts with `--dangerously-skip-permissions` and full autonomy
 4. 🔄 **Sync** — On exit, file changes copy back; sessions persist for `--resume`
 5. 🔁 **Continue** — Claude resumes on the host with normal permissions for review
-
-## ⚙️ Options
-
-| Flag | Description |
-|------|-------------|
-| `--continue` | (default) After sync-back, resume the session on host with normal permissions |
-| `--no-continue` | Exit after sync-back instead of resuming |
-| `--firewall` | Restrict outbound traffic to Anthropic API, GitHub, npm, and PyPI |
-| `--no-firewall` | (default) Unrestricted network access |
-| `--docker` | Mount Docker socket (lets Claude manage sibling containers) |
-| `--network NAME` | Connect to a Docker network (e.g. for databases) |
-| `--full` | Include `node_modules`, `.venv`, etc. (excluded by default for speed) |
-| `--show-diff` | Display diff before syncing changes back |
-| `--interactive` | Prompt before copying changes back |
-| `--rebuild` | Force Docker image rebuild |
-| `--purge-sessions` | Delete saved session/todo data for the project |
-| `-- [args]` | Pass remaining arguments to Claude |
-
-## 📖 Examples
-
-```bash
-# Let Claude fix all tests autonomously, then review on host
-claude-nogit -- -p "fix all failing tests"
-
-# Resume a previous conversation
-claude-nogit -- --resume
-
-# Review changes before they apply
-claude-nogit --interactive
-
-# Restrict network access
-claude-nogit --firewall
-
-# Connect to a local database
-claude-nogit --network my-network
-
-# Let Claude spin up sibling containers
-claude-nogit --docker
-```
-
-## 🔎 How It Compares
-
-| | claude-nogit | Bare `--dangerously-skip-permissions` | [Agent Safehouse](https://agent-safehouse.dev/) |
-|---|---|---|---|
-| **Git safety** | `.git` physically absent | `.git` fully writable | `.git` writable (within project dir) |
-| **Network control** | Firewall allowlist | Unrestricted | No network isolation |
-| **Blast radius** | Container only | Entire system | Project directory |
-| **Session continuity** | Resumes on host after sync | N/A | Native |
-| **Platform** | Linux, macOS (Docker) | Any | macOS only |
-| **Overhead** | Container startup + rsync | None | Near zero |
 
 ## ❓ FAQ
 
