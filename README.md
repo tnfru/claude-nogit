@@ -7,25 +7,25 @@
 [![Docker](https://img.shields.io/badge/Docker-required-blue?logo=docker&logoColor=white)](https://www.docker.com/)
 [![Claude Code](https://img.shields.io/badge/Claude_Code-required-blueviolet)](https://claude.ai/download)
 
-Give Claude `--dangerously-skip-permissions` without the danger. Your `.git` never enters the container — Claude gets full autonomy over your code, but can't touch your history, force-push, or delete branches. When it's done, you resume the same conversation on your host to review everything it did.
+Give Claude `--dangerously-skip-permissions` without the danger. Your `.git` never enters the container — Claude gets full autonomy over your code, but can't touch your history, force-push, or delete branches. When it's done, you land in the worktree to review everything it did.
 
 ## ✨ Features
 
-- 🔒 **Git Isolation** — `.git` is physically absent from the container; your history is untouchable
-- 🔁 **Session Continuity** — Claude resumes on your host after sync-back for seamless review
+- 🔒 **Git Isolation** — `.git` is hidden behind a tmpfs; your history is untouchable
+- 🌿 **Worktree-Based** — Changes go to a git worktree on a new branch, not your working tree
+- 🔁 **Session Continuity** — Claude resumes in the worktree with normal permissions for review
 - 🛡️ **Network Firewall** — Optional allowlist restricting traffic to Anthropic, GitHub, npm, and PyPI
 - 🐳 **Docker Socket** — Let Claude manage sibling containers with `--docker`
-- 🔄 **Auto-Rebuild** — Docker image rebuilds automatically when your local Claude version updates
 - 📦 **Lightweight Image** — `debian:bookworm-slim` with native Claude binary (~591MB vs ~1.4GB with Node.js)
 
 ## 🛡️ What's Protected
 
 | | Threat | Protection |
 |---|--------|------------|
-| 🔨 | `git push --force` | `.git` is physically absent from the container |
-| 💥 | `git reset --hard` | No git history to reset |
-| ✏️ | Rewrite commit history | No commits to rewrite |
-| 🗑️ | Delete branches | No branches to delete |
+| 🔨 | `git push --force` | `.git` is hidden behind a tmpfs inside the container |
+| 💥 | `git reset --hard` | No real git history to reset |
+| ✏️ | Rewrite commit history | No real commits to rewrite |
+| 🗑️ | Delete branches | No branches accessible |
 | 🌐 | Exfiltrate code via network | Firewall restricts traffic to Anthropic, GitHub, npm, and PyPI |
 | 📂 | Modify files outside project | Container filesystem isolation |
 
@@ -61,15 +61,13 @@ gitjail -- --resume                  # resume a previous conversation
 
 | Flag | Description |
 |------|-------------|
-| `--continue` | (default) After sync-back, resume the session on host with normal permissions |
-| `--no-continue` | Exit after sync-back instead of resuming |
+| `--continue` | (default) After container exits, resume session in worktree with normal permissions |
+| `--no-continue` | Drop into worktree shell without resuming Claude |
 | `--firewall` | Restrict outbound traffic to Anthropic API, GitHub, npm, and PyPI |
 | `--no-firewall` | (default) Unrestricted network access |
 | `--docker` | Mount Docker socket (lets Claude manage sibling containers) |
 | `--network NAME` | Connect to a Docker network (e.g. for databases) |
-| `--full` | Include `node_modules`, `.venv`, etc. (excluded by default for speed) |
-| `--show-diff` | Display diff before syncing changes back |
-| `--interactive` | Prompt before copying changes back |
+| `--full` | Include `node_modules`, `.venv`, etc. in the worktree |
 | `--rebuild` | Force Docker image rebuild |
 | `--purge-sessions` | Delete saved session/todo data for the project |
 | `-- [args]` | Pass remaining arguments to Claude |
@@ -78,24 +76,21 @@ gitjail -- --resume                  # resume a previous conversation
 
 | | gitjail | Bare `--dangerously-skip-permissions` | Process-level sandboxes |
 |---|---|---|---|
-| **Git safety** | `.git` physically absent | `.git` fully writable | `.git` writable (within project dir) |
+| **Git safety** | `.git` hidden behind tmpfs | `.git` fully writable | `.git` writable (within project dir) |
 | **Network control** | Firewall allowlist | Unrestricted | Varies |
 | **Blast radius** | Container only | Entire system | Project directory |
-| **Session continuity** | Resumes on host after sync | N/A | Native |
+| **Session continuity** | Resumes in worktree | N/A | Native |
 | **Platform** | Linux, macOS (Docker) | Any | OS-specific |
-| **Overhead** | Container startup + rsync | None | Near zero |
+| **Overhead** | Worktree checkout + container startup | None | Near zero |
 
 ## 📖 Examples
 
 ```bash
-# Let Claude fix all tests autonomously, then review on host
+# Let Claude fix all tests autonomously, then review in worktree
 gitjail -- -p "fix all failing tests"
 
 # Resume a previous conversation
 gitjail -- --resume
-
-# Review changes before they apply
-gitjail --interactive
 
 # Restrict network access
 gitjail --firewall
@@ -105,11 +100,12 @@ gitjail --network my-network
 
 # Let Claude spin up sibling containers
 gitjail --docker
+
+# Include dependencies in the worktree
+gitjail --full
 ```
 
 ## 🔁 The Workflow
-
-Most sandboxing tools are batch jobs — run the agent, get results, start a new session to review. gitjail keeps the conversation going:
 
 ```
   ┌─────────────────────────────────────────────────────────┐
@@ -117,20 +113,18 @@ Most sandboxing tools are batch jobs — run the agent, get results, start a new
   │                                                         │
   │  Claude works with --dangerously-skip-permissions       │
   │  Full file access, commands, packages — no prompts      │
-  │  .git is physically absent                              │
+  │  .git is hidden behind a tmpfs                          │
   └──────────────────────┬──────────────────────────────────┘
-                         │ changes sync back
+                         │ container exits
                          ▼
   ┌─────────────────────────────────────────────────────────┐
-  │  HOST (supervised)                                      │
+  │  WORKTREE (supervised)                                  │
   │                                                         │
+  │  Changes are already on disk — no sync needed           │
   │  Same session resumes with normal permissions            │
-  │  Review changes, run /review-pr, ask questions          │
-  │  git diff, commit, or revert                            │
+  │  Review, commit, merge, or discard the branch           │
   └─────────────────────────────────────────────────────────┘
 ```
-
-The `--continue` flag (on by default) automatically resumes the session on your host after sync-back. Use `--no-continue` to exit instead.
 
 ## 🔬 How It Works
 
@@ -139,12 +133,13 @@ The `--continue` flag (on by default) automatically resumes the session on your 
  ──────                                       ─────────
 
   project/                                     /workspace
-  ├── .git/  ✗ stays on host                   ├── src/
-  ├── src/   ─── rsync (no .git) ──────────>   ├── package.json
-  ├── ...                                      └── ...
-  │
-  │            file changes                    Claude runs with full
-  │          <── rsync back ───────────────    --dangerously-skip-permissions
+  ├── .git/ (main repo)                        ├── src/
+  │                                            ├── package.json
+  │   git worktree add                         └── ...
+  │        ↓
+  │   /tmp/gitjail-*/    ─── bind mount ───>   .git is a tmpfs (hidden)
+  │   (new branch)                             throwaway git init for
+  │                                            git diff baseline
   │
   ~/.claude/                                   /home/node/.claude/
   ├── credentials ──────────────────────────>  ├── credentials
@@ -152,11 +147,11 @@ The `--continue` flag (on by default) automatically resumes the session on your 
   └── sessions    <────────────────────────>   └── sessions
 ```
 
-1. 📋 **Copy** — `rsync` your project to a temp dir, excluding `.git` and respecting `.gitignore`
-2. 🐳 **Isolate** — Temp copy is mounted in a container with the native Claude binary
+1. 🌿 **Worktree** — `git worktree add` creates a checkout on a new branch (instant, no file copying)
+2. 🐳 **Isolate** — Worktree is bind-mounted into a container with `.git` hidden behind a tmpfs
 3. 🚀 **Run** — Claude starts with `--dangerously-skip-permissions` and full autonomy
-4. 🔄 **Sync** — On exit, file changes copy back; sessions persist for `--resume`
-5. 🔁 **Continue** — Claude resumes on the host with normal permissions for review
+4. 📁 **Done** — Changes are already on disk in the worktree — no sync needed
+5. 🔁 **Continue** — You land in the worktree shell; Claude resumes with normal permissions
 
 ## ❓ FAQ
 
@@ -175,13 +170,13 @@ No. Claude has full `--dangerously-skip-permissions` inside the container. It ca
 <details>
 <summary><strong>What about .env files?</strong></summary>
 
-They're copied into the container so Claude can use them. If this concerns you, add sensitive files to `.gitignore` (respected during copy) or exclude them manually.
+The worktree only contains git-tracked files. Untracked files like `.env` won't be present. Use `--full` to copy dependency directories, or add specific files manually.
 </details>
 
 <details>
 <summary><strong>What if I Ctrl+C during a session?</strong></summary>
 
-Sessions are synced back via a cleanup handler on SIGINT/SIGTERM. The workspace persists at `/tmp/claude-workspace-*` until reboot, with recovery instructions printed to the terminal.
+Sessions are synced back via a cleanup handler on SIGINT/SIGTERM. If the worktree has changes, it's preserved with instructions for manual cleanup.
 </details>
 
 <details>
@@ -191,9 +186,13 @@ Outbound traffic to Anthropic API, GitHub (IPs from their `/meta` endpoint), npm
 </details>
 
 <details>
-<summary><strong>What gets excluded by default?</strong></summary>
+<summary><strong>How do I clean up a worktree?</strong></summary>
 
-`.git/`, `.DS_Store`, `node_modules/`, `.venv/`, `__pycache__/`, `*.pyc`, and anything matched by your `.gitignore`. Use `--full` to include dependency directories.
+```bash
+git worktree remove /tmp/gitjail-*
+```
+
+If the worktree has no changes, gitjail cleans it up automatically.
 </details>
 
 ## 🙏 Contributing
