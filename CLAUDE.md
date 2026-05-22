@@ -1,11 +1,11 @@
-# claude-nogit
+# gitjail
 
 Docker isolation wrapper for Claude Code. Copies a project (minus `.git`) into a container, runs Claude with `--dangerously-skip-permissions`, syncs changes back. Git history never enters the container.
 
 ## Architecture
 
 ```
-claude-nogit (bash)          Entry point. Arg parsing, rsync copy, Docker orchestration, sync-back.
+gitjail (bash)          Entry point. Arg parsing, rsync copy, Docker orchestration, sync-back.
 devcontainer/
   Dockerfile                 debian:bookworm-slim + native Claude binary. No Node.js.
   entrypoint.sh              Conditionally runs firewall init, then exec's claude.
@@ -29,7 +29,7 @@ Everything is bash. There is no build system, no package manager, no test framew
 
 ### Shell conventions
 
-All scripts use `set -euo pipefail`. The main script (`claude-nogit`) temporarily disables `set -e` around `docker run` to capture exit codes. Arrays are used for argument building — no `eval` or string concatenation.
+All scripts use `set -euo pipefail`. The main script (`gitjail`) temporarily disables `set -e` around `docker run` to capture exit codes. Arrays are used for argument building — no `eval` or string concatenation.
 
 Color output: `GREEN` for success, `YELLOW` for warnings/progress, `RED` for errors. Use `echo -e` with `$NC` reset.
 
@@ -39,27 +39,27 @@ There is no automated test suite. Test manually:
 
 ```bash
 # Basic run (current directory)
-./claude-nogit
+./gitjail
 
 # With firewall
-./claude-nogit --firewall
+./gitjail --firewall
 
 # Without firewall
-./claude-nogit --no-firewall
+./gitjail --no-firewall
 
 # Interactive mode (prompts before sync-back)
-./claude-nogit --interactive
+./gitjail --interactive
 
 # Verify firewall blocks non-allowlisted traffic
 # (init-firewall.sh has a built-in curl to example.com that must fail)
 
 # Verify session persistence
-./claude-nogit -- --resume
+./gitjail -- --resume
 ```
 
 ### Docker image
 
-- Image name: `claude-code-dev`
+- Image name: `gitjail-dev`
 - Build arg `CLAUDE_CODE_VERSION` is detected from host's `claude --version`
 - Image label `claude.version` tracks the version; mismatch triggers auto-rebuild
 - `--rebuild` flag forces a no-cache rebuild
@@ -70,7 +70,7 @@ Edit `devcontainer/init-firewall.sh`. Add domains to the `for domain in ...` loo
 
 ### Sync-back logic
 
-The rsync filters in `claude-nogit` are duplicated in two places: the initial copy and the sync-back (`SYNC_EXCLUDES`). Keep them in sync. Both use `--filter=':- .gitignore'` for per-directory .gitignore support.
+The rsync filters in `gitjail` are duplicated in two places: the initial copy and the sync-back (`SYNC_EXCLUDES`). Keep them in sync. Both use `--filter=':- .gitignore'` for per-directory .gitignore support.
 
 ### Common pitfalls
 

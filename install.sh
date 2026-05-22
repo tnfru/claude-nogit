@@ -7,9 +7,9 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m'
 
-REPO_URL="https://raw.githubusercontent.com/tnfru/claude-nogit/master"
+REPO_URL="https://raw.githubusercontent.com/tnfru/gitjail/master"
 
-echo -e "${GREEN}Installing claude-nogit...${NC}"
+echo -e "${GREEN}Installing gitjail...${NC}"
 
 # Check prerequisites
 if ! command -v docker &>/dev/null; then
@@ -25,9 +25,9 @@ fi
 mkdir -p ~/.local/bin
 
 # Download the main script
-echo -e "${YELLOW}Downloading claude-nogit...${NC}"
-curl -fsSL "$REPO_URL/claude-nogit" -o ~/.local/bin/claude-nogit
-chmod +x ~/.local/bin/claude-nogit
+echo -e "${YELLOW}Downloading gitjail...${NC}"
+curl -fsSL "$REPO_URL/gitjail" -o ~/.local/bin/gitjail
+chmod +x ~/.local/bin/gitjail
 
 # Download devcontainer files
 DEVCONTAINER_DIR="$HOME/.claude/devcontainer"
@@ -54,6 +54,6 @@ if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
 fi
 
 echo -e "${GREEN}✓ Installation complete!${NC}"
-echo -e "${GREEN}Usage: claude-nogit [project-directory]${NC}"
-echo -e "${YELLOW}Example: claude-nogit ~/my-project${NC}"
+echo -e "${GREEN}Usage: gitjail [project-directory]${NC}"
+echo -e "${YELLOW}Example: gitjail ~/my-project${NC}"
 echo -e "${YELLOW}The network firewall is enabled by default; pass --no-firewall to disable it.${NC}"

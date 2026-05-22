@@ -1,4 +1,4 @@
-# claude-nogit
+# gitjail
 
 ### 🐳 Run Claude Code autonomously. Keep your git history safe.
 
@@ -32,15 +32,15 @@ Give Claude `--dangerously-skip-permissions` without the danger. Your `.git` nev
 ## 📦 Installation
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/tnfru/claude-nogit/master/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/tnfru/gitjail/master/install.sh | bash
 ```
 
 <details>
 <summary>Manual install</summary>
 
 ```bash
-git clone https://github.com/tnfru/claude-nogit.git
-cp claude-nogit/claude-nogit ~/.local/bin/
+git clone https://github.com/tnfru/gitjail.git
+cp gitjail/gitjail ~/.local/bin/
 # Ensure ~/.local/bin is in your PATH
 ```
 
@@ -51,10 +51,10 @@ cp claude-nogit/claude-nogit ~/.local/bin/
 ## 🚀 Quick Start
 
 ```bash
-claude-nogit                              # run in current directory
-claude-nogit /path/to/project             # run on a specific project
-claude-nogit -- -p "fix all failing tests" # give Claude a task directly
-claude-nogit -- --resume                  # resume a previous conversation
+gitjail                              # run in current directory
+gitjail /path/to/project             # run on a specific project
+gitjail -- -p "fix all failing tests" # give Claude a task directly
+gitjail -- --resume                  # resume a previous conversation
 ```
 
 ## ⚙️ Options
@@ -76,7 +76,7 @@ claude-nogit -- --resume                  # resume a previous conversation
 
 ## 🔎 How It Compares
 
-| | claude-nogit | Bare `--dangerously-skip-permissions` | Process-level sandboxes |
+| | gitjail | Bare `--dangerously-skip-permissions` | Process-level sandboxes |
 |---|---|---|---|
 | **Git safety** | `.git` physically absent | `.git` fully writable | `.git` writable (within project dir) |
 | **Network control** | Firewall allowlist | Unrestricted | Varies |
@@ -89,27 +89,27 @@ claude-nogit -- --resume                  # resume a previous conversation
 
 ```bash
 # Let Claude fix all tests autonomously, then review on host
-claude-nogit -- -p "fix all failing tests"
+gitjail -- -p "fix all failing tests"
 
 # Resume a previous conversation
-claude-nogit -- --resume
+gitjail -- --resume
 
 # Review changes before they apply
-claude-nogit --interactive
+gitjail --interactive
 
 # Restrict network access
-claude-nogit --firewall
+gitjail --firewall
 
 # Connect to a local database
-claude-nogit --network my-network
+gitjail --network my-network
 
 # Let Claude spin up sibling containers
-claude-nogit --docker
+gitjail --docker
 ```
 
 ## 🔁 The Workflow
 
-Most sandboxing tools are batch jobs — run the agent, get results, start a new session to review. claude-nogit keeps the conversation going:
+Most sandboxing tools are batch jobs — run the agent, get results, start a new session to review. gitjail keeps the conversation going:
 
 ```
   ┌─────────────────────────────────────────────────────────┐
