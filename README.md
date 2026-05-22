@@ -76,13 +76,13 @@ claude-nogit -- --resume                  # resume a previous conversation
 
 ## 🔎 How It Compares
 
-| | claude-nogit | Bare `--dangerously-skip-permissions` | [Agent Safehouse](https://agent-safehouse.dev/) |
+| | claude-nogit | Bare `--dangerously-skip-permissions` | Process-level sandboxes |
 |---|---|---|---|
 | **Git safety** | `.git` physically absent | `.git` fully writable | `.git` writable (within project dir) |
-| **Network control** | Firewall allowlist | Unrestricted | No network isolation |
+| **Network control** | Firewall allowlist | Unrestricted | Varies |
 | **Blast radius** | Container only | Entire system | Project directory |
 | **Session continuity** | Resumes on host after sync | N/A | Native |
-| **Platform** | Linux, macOS (Docker) | Any | macOS only |
+| **Platform** | Linux, macOS (Docker) | Any | OS-specific |
 | **Overhead** | Container startup + rsync | None | Near zero |
 
 ## 📖 Examples
