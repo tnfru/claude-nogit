@@ -189,6 +189,19 @@ ISOLATED_CLAUDE="/tmp/autobox-claude-$$"
 
 # Worktree naming: --name overrides the default timestamp, --worktree reuses existing
 if [ -n "$EXISTING_WORKTREE" ]; then
+    EXISTING_WORKTREE="$(cd "$EXISTING_WORKTREE" 2>/dev/null && pwd)" || true
+    if [ ! -d "$EXISTING_WORKTREE" ]; then
+        echo -e "${RED}Error: Worktree path does not exist: $EXISTING_WORKTREE${NC}"
+        exit 1
+    fi
+    case "$EXISTING_WORKTREE" in
+        "$WORKTREE_BASE"/*)
+            ;;
+        *)
+            echo -e "${RED}Error: Worktree path is not under $WORKTREE_BASE${NC}"
+            exit 1
+            ;;
+    esac
     WORKTREE_DIR="$EXISTING_WORKTREE"
     BRANCH_NAME=$(git -C "$WORKTREE_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
 elif [ -n "$AGENT_NAME" ]; then
