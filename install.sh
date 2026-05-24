@@ -56,4 +56,4 @@ fi
 echo -e "${GREEN}✓ Installation complete!${NC}"
 echo -e "${GREEN}Usage: autobox [project-directory]${NC}"
 echo -e "${YELLOW}Example: autobox ~/my-project${NC}"
-echo -e "${YELLOW}The network firewall is enabled by default; pass --no-firewall to disable it.${NC}"
+echo -e "${YELLOW}The network firewall is disabled by default; pass --firewall to restrict access.${NC}"
