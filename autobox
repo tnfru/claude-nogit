@@ -30,7 +30,7 @@ HOST_PROJECT_NAME=""
 CONTAINER_PROJECT_NAME="-workspace"
 CONTAINER_ID=""
 CONTAINER_EXIT_CODE=0
-CONTINUE_ON_HOST=true
+CONTINUE_ON_HOST=false
 SESSIONS_SYNCED=false
 GITFILE_BACKUP=""
 
@@ -89,8 +89,8 @@ while [[ $# -gt 0 ]]; do
             echo "  --no-docker        Don't mount Docker socket"
             echo "  --network NAME     Connect container to a Docker network (e.g. for databases)"
             echo "  --purge-sessions   Delete all session data for the given project and exit"
-            echo "  --continue         (default) After exit, resume session on host (normal permissions)"
-            echo "  --no-continue      Exit after container stops instead of resuming"
+            echo "  --continue         After exit, resume session on host (normal permissions)"
+            echo "  --no-continue      (default) Exit after container stops instead of resuming"
             echo "  -h, --help         Show help"
             echo ""
             echo "Arguments after -- are passed directly to Claude:"
