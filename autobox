@@ -177,6 +177,15 @@ sync_sessions_to_host() {
             find "$HOME/.claude/projects/$HOST_PROJECT_NAME" -name "*.jsonl" 2>/dev/null | while read -r f; do
                 sed 's|"cwd": "/workspace"|"cwd": "'"$resume_dir"'"|g' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
             done
+            # Also copy to worktree project path so --resume finds sessions from the worktree cwd
+            if [ -n "${WORKTREE_DIR:-}" ] && [ -d "$WORKTREE_DIR" ]; then
+                local worktree_project_name
+                worktree_project_name=$(echo "$WORKTREE_DIR" | sed 's|/|-|g')
+                if [ "$worktree_project_name" != "$HOST_PROJECT_NAME" ]; then
+                    mkdir -p "$HOME/.claude/projects/$worktree_project_name"
+                    cp -a "$HOME/.claude/projects/$HOST_PROJECT_NAME"/. "$HOME/.claude/projects/$worktree_project_name/" 2>/dev/null || true
+                fi
+            fi
         fi
         if [ -d "$ISOLATED_CLAUDE/sessions" ] && [ "$(ls -A "$ISOLATED_CLAUDE/sessions" 2>/dev/null)" ]; then
             echo -e "${YELLOW}Saving sessions...${NC}"
