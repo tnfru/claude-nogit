@@ -157,7 +157,9 @@ fi
 # Generate unique IDs
 CONTAINER_ID="$$-$(date +%s)"
 BRANCH_NAME="agent/autobox-$(date +%Y%m%d-%H%M%S)"
-WORKTREE_DIR="/tmp/autobox-$$-$(date +%s)"
+WORKTREE_BASE="$PROJECT_DIR/.claude/worktrees"
+mkdir -p "$WORKTREE_BASE"
+WORKTREE_DIR="$WORKTREE_BASE/autobox-$$-$(date +%s)"
 ISOLATED_CLAUDE="/tmp/autobox-claude-$$"
 
 sync_sessions_to_host() {
@@ -274,7 +276,7 @@ echo -e "${GREEN}✓ Worktree created on branch $BRANCH_NAME${NC}"
 
 # Replace .git file with empty directory so Docker can mount tmpfs over it
 # (worktree .git is a file pointing to the main repo — tmpfs needs a directory)
-GITFILE_BACKUP="/tmp/autobox-gitfile-$$"
+GITFILE_BACKUP="$WORKTREE_BASE/.gitfile-backup-$$"
 cp "$WORKTREE_DIR/.git" "$GITFILE_BACKUP"
 rm "$WORKTREE_DIR/.git"
 mkdir "$WORKTREE_DIR/.git"
