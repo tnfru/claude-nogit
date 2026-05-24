@@ -15,7 +15,7 @@ NC='\033[0m'
 FULL_COPY=false
 FORCE_REBUILD=false
 USE_FIREWALL=false
-USE_DOCKER=false
+USE_DOCKER=true
 PURGE_SESSIONS=false
 DOCKER_NETWORK=""
 PROJECT_DIR=""
@@ -56,6 +56,10 @@ while [[ $# -gt 0 ]]; do
             USE_DOCKER=true
             shift
             ;;
+        --no-docker)
+            USE_DOCKER=false
+            shift
+            ;;
         --network)
             DOCKER_NETWORK="$2"
             shift 2
@@ -81,7 +85,8 @@ while [[ $# -gt 0 ]]; do
             echo "  --rebuild          Force Docker image rebuild"
             echo "  --firewall         Restrict network to Anthropic API, GitHub, and npm"
             echo "  --no-firewall      (default) Unrestricted network access"
-            echo "  --docker           Mount Docker socket (lets Claude spin up sibling containers)"
+            echo "  --docker           (default) Mount Docker socket (lets Claude spin up sibling containers)"
+            echo "  --no-docker        Don't mount Docker socket"
             echo "  --network NAME     Connect container to a Docker network (e.g. for databases)"
             echo "  --purge-sessions   Delete all session data for the given project and exit"
             echo "  --continue         (default) After exit, resume session on host (normal permissions)"
@@ -379,13 +384,14 @@ fi
 DOCKER_SOCK="/var/run/docker.sock"
 if [ "$USE_DOCKER" = true ]; then
     if [ ! -S "$DOCKER_SOCK" ]; then
-        echo -e "${RED}Error: Docker socket not found at $DOCKER_SOCK${NC}"
-        exit 1
-    fi
-    if stat --version >/dev/null 2>&1; then
-        DOCKER_GID=$(stat -c '%g' "$DOCKER_SOCK")
+        echo -e "${YELLOW}Warning: Docker socket not found at $DOCKER_SOCK — disabling Docker mount${NC}"
+        USE_DOCKER=false
     else
-        DOCKER_GID=$(stat -f '%g' "$DOCKER_SOCK")
+        if stat --version >/dev/null 2>&1; then
+            DOCKER_GID=$(stat -c '%g' "$DOCKER_SOCK")
+        else
+            DOCKER_GID=$(stat -f '%g' "$DOCKER_SOCK")
+        fi
     fi
 fi
 
@@ -396,7 +402,7 @@ echo -e "${GREEN}Claude will auto-start with --dangerously-skip-permissions${NC}
 if [ "$USE_FIREWALL" = true ]; then
     echo -e "${GREEN}Network firewall enabled (only Anthropic, GitHub, npm allowed)${NC}"
 else
-    echo -e "${RED}Warning: Firewall disabled. Claude has unrestricted network access.${NC}"
+    echo -e "${YELLOW}Network: unrestricted (pass --firewall to restrict)${NC}"
 fi
 if [ "$USE_DOCKER" = true ]; then
     echo -e "${GREEN}Docker socket mounted (Claude can manage sibling containers)${NC}"
@@ -437,7 +443,11 @@ if [ -n "$DOCKER_NETWORK" ]; then
 fi
 
 if [ "$USE_DOCKER" = true ]; then
-    DOCKER_ARGS+=(-v "$DOCKER_SOCK:/var/run/docker.sock" --group-add "$DOCKER_GID")
+    DOCKER_ARGS+=(
+        -v "$DOCKER_SOCK:/var/run/docker-host.sock"
+        --group-add "$DOCKER_GID"
+        -e "HOST_WORKSPACE=$WORKTREE_DIR"
+    )
 fi
 
 # Always use entrypoint (handles firewall + throwaway git init)
