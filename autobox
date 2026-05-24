@@ -484,11 +484,32 @@ if [ "$CONTAINER_EXIT_CODE" -ne 0 ]; then
     echo -e "${YELLOW}Warning: Container exited with code $CONTAINER_EXIT_CODE${NC}"
 fi
 
-# Capture the most recent session ID for --resume (before cleanup deletes it)
+# Capture the most recent session ID and create a host-side session registry entry.
+# Claude indexes sessions by PID (sessions/<pid>.json → {sessionId, cwd, ...}).
+# The container PID is meaningless on the host, so we create a new entry with
+# the host shell's PID so `claude --resume <id>` can find the conversation.
 RESUME_SESSION_ID=""
 LATEST_SESSION=$(ls -t "$ISOLATED_CLAUDE/projects/$CONTAINER_PROJECT_NAME"/*.jsonl 2>/dev/null | head -1)
 if [ -n "$LATEST_SESSION" ]; then
     RESUME_SESSION_ID=$(basename "$LATEST_SESSION" .jsonl)
+    # Find the container's session registry entry for this session ID
+    CONTAINER_SESSION_FILE=""
+    for f in "$ISOLATED_CLAUDE/sessions"/*.json; do
+        [ -f "$f" ] || continue
+        if grep -q "$RESUME_SESSION_ID" "$f" 2>/dev/null; then
+            CONTAINER_SESSION_FILE="$f"
+            break
+        fi
+    done
+    if [ -n "$CONTAINER_SESSION_FILE" ]; then
+        mkdir -p "$HOME/.claude/sessions"
+        # Rewrite cwd and PID for the host, keep everything else
+        local_resume_dir="${WORKTREE_DIR:-$PROJECT_DIR}"
+        [ ! -d "$local_resume_dir" ] && local_resume_dir="$PROJECT_DIR"
+        sed -e 's|"cwd": "[^"]*"|"cwd": "'"$local_resume_dir"'"|' \
+            -e 's|"pid": [0-9]*|"pid": '"$$"'|' \
+            "$CONTAINER_SESSION_FILE" > "$HOME/.claude/sessions/$$.json"
+    fi
 fi
 
 # Restore .git file so worktree is a valid git repo again
