@@ -33,10 +33,10 @@ chmod +x ~/.local/bin/autobox
 DEVCONTAINER_DIR="$HOME/.claude/devcontainer"
 echo -e "${YELLOW}Setting up devcontainer files...${NC}"
 mkdir -p "$DEVCONTAINER_DIR"
-for file in Dockerfile entrypoint.sh init-firewall.sh; do
+for file in Dockerfile entrypoint.sh init-firewall.sh docker-proxy.py; do
   curl -fsSL "$REPO_URL/devcontainer/$file" -o "$DEVCONTAINER_DIR/$file"
 done
-chmod +x "$DEVCONTAINER_DIR/entrypoint.sh" "$DEVCONTAINER_DIR/init-firewall.sh"
+chmod +x "$DEVCONTAINER_DIR/entrypoint.sh" "$DEVCONTAINER_DIR/init-firewall.sh" "$DEVCONTAINER_DIR/docker-proxy.py"
 
 # Check if ~/.local/bin is in PATH
 if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then

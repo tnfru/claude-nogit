@@ -106,9 +106,10 @@ ENV TERM=xterm-256color
 
 # Copy and set up firewall script
 COPY init-firewall.sh /usr/local/bin/
+COPY docker-proxy.py /usr/local/bin/
 COPY entrypoint.sh /usr/local/bin/
 USER root
-RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/entrypoint.sh && \
+RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/docker-proxy.py /usr/local/bin/entrypoint.sh && \
     echo "$USERNAME ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh" > /etc/sudoers.d/$USERNAME-firewall && \
     chmod 0440 /etc/sudoers.d/$USERNAME-firewall
 USER $USERNAME

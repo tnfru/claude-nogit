@@ -443,7 +443,11 @@ if [ -n "$DOCKER_NETWORK" ]; then
 fi
 
 if [ "$USE_DOCKER" = true ]; then
-    DOCKER_ARGS+=(-v "$DOCKER_SOCK:/var/run/docker.sock" --group-add "$DOCKER_GID")
+    DOCKER_ARGS+=(
+        -v "$DOCKER_SOCK:/var/run/docker-host.sock"
+        --group-add "$DOCKER_GID"
+        -e "HOST_WORKSPACE=$WORKTREE_DIR"
+    )
 fi
 
 # Always use entrypoint (handles firewall + throwaway git init)
