@@ -30,7 +30,7 @@ HOST_PROJECT_NAME=""
 CONTAINER_PROJECT_NAME="-workspace"
 CONTAINER_ID=""
 CONTAINER_EXIT_CODE=0
-CONTINUE_ON_HOST=true
+CONTINUE_ON_HOST=false
 SESSIONS_SYNCED=false
 GITFILE_BACKUP=""
 
@@ -89,8 +89,8 @@ while [[ $# -gt 0 ]]; do
             echo "  --no-docker        Don't mount Docker socket"
             echo "  --network NAME     Connect container to a Docker network (e.g. for databases)"
             echo "  --purge-sessions   Delete all session data for the given project and exit"
-            echo "  --continue         (default) After exit, resume session on host (normal permissions)"
-            echo "  --no-continue      Exit after container stops instead of resuming"
+            echo "  --continue         After exit, resume session on host (normal permissions)"
+            echo "  --no-continue      (default) Exit after container stops instead of resuming"
             echo "  -h, --help         Show help"
             echo ""
             echo "Arguments after -- are passed directly to Claude:"
@@ -154,10 +154,22 @@ if [ ! -d "$PROJECT_DIR/.git" ] && [ ! -f "$PROJECT_DIR/.git" ]; then
     exit 1
 fi
 
+# If we're inside a worktree, resolve to the main repo root to avoid nesting
+TOPLEVEL=$(git -C "$PROJECT_DIR" rev-parse --show-toplevel 2>/dev/null || true)
+COMMON_DIR=$(git -C "$PROJECT_DIR" rev-parse --git-common-dir 2>/dev/null || true)
+if [ -n "$COMMON_DIR" ] && [ "$COMMON_DIR" != ".git" ] && [ "$COMMON_DIR" != "$TOPLEVEL/.git" ]; then
+    # We're in a worktree — resolve to the main repo
+    MAIN_REPO=$(cd "$PROJECT_DIR" && cd "$(git rev-parse --git-common-dir)/.." && pwd)
+    echo -e "${YELLOW}Detected worktree — using main repo: $MAIN_REPO${NC}"
+    PROJECT_DIR="$MAIN_REPO"
+fi
+
 # Generate unique IDs
 CONTAINER_ID="$$-$(date +%s)"
 BRANCH_NAME="agent/autobox-$(date +%Y%m%d-%H%M%S)"
-WORKTREE_DIR="/tmp/autobox-$$-$(date +%s)"
+WORKTREE_BASE="$PROJECT_DIR/.claude/worktrees"
+mkdir -p "$WORKTREE_BASE"
+WORKTREE_DIR="$WORKTREE_BASE/autobox-$$-$(date +%s)"
 ISOLATED_CLAUDE="/tmp/autobox-claude-$$"
 
 sync_sessions_to_host() {
@@ -175,6 +187,15 @@ sync_sessions_to_host() {
             find "$HOME/.claude/projects/$HOST_PROJECT_NAME" -name "*.jsonl" 2>/dev/null | while read -r f; do
                 sed 's|"cwd": "/workspace"|"cwd": "'"$resume_dir"'"|g' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
             done
+            # Also copy to worktree project path so --resume finds sessions from the worktree cwd
+            if [ -n "${WORKTREE_DIR:-}" ] && [ -d "$WORKTREE_DIR" ]; then
+                local worktree_project_name
+                worktree_project_name=$(echo "$WORKTREE_DIR" | sed 's|/|-|g')
+                if [ "$worktree_project_name" != "$HOST_PROJECT_NAME" ]; then
+                    mkdir -p "$HOME/.claude/projects/$worktree_project_name"
+                    cp -a "$HOME/.claude/projects/$HOST_PROJECT_NAME"/. "$HOME/.claude/projects/$worktree_project_name/" 2>/dev/null || true
+                fi
+            fi
         fi
         if [ -d "$ISOLATED_CLAUDE/sessions" ] && [ "$(ls -A "$ISOLATED_CLAUDE/sessions" 2>/dev/null)" ]; then
             echo -e "${YELLOW}Saving sessions...${NC}"
@@ -210,7 +231,11 @@ enter_worktree() {
     if [ "$CONTINUE_ON_HOST" = true ]; then
         echo
         echo -e "${GREEN}Resuming session in worktree (with normal permissions)...${NC}"
-        claude --resume || true
+        if [ -n "$RESUME_SESSION_ID" ]; then
+            claude --resume "$RESUME_SESSION_ID" || true
+        else
+            claude --resume || true
+        fi
     fi
     exec "$SHELL"
 }
@@ -274,7 +299,7 @@ echo -e "${GREEN}✓ Worktree created on branch $BRANCH_NAME${NC}"
 
 # Replace .git file with empty directory so Docker can mount tmpfs over it
 # (worktree .git is a file pointing to the main repo — tmpfs needs a directory)
-GITFILE_BACKUP="/tmp/autobox-gitfile-$$"
+GITFILE_BACKUP="$WORKTREE_BASE/.gitfile-backup-$$"
 cp "$WORKTREE_DIR/.git" "$GITFILE_BACKUP"
 rm "$WORKTREE_DIR/.git"
 mkdir "$WORKTREE_DIR/.git"
@@ -467,6 +492,34 @@ set -e
 # Warn on non-zero exit code
 if [ "$CONTAINER_EXIT_CODE" -ne 0 ]; then
     echo -e "${YELLOW}Warning: Container exited with code $CONTAINER_EXIT_CODE${NC}"
+fi
+
+# Capture the most recent session ID and create a host-side session registry entry.
+# Claude indexes sessions by PID (sessions/<pid>.json → {sessionId, cwd, ...}).
+# The container PID is meaningless on the host, so we create a new entry with
+# the host shell's PID so `claude --resume <id>` can find the conversation.
+RESUME_SESSION_ID=""
+LATEST_SESSION=$(ls -t "$ISOLATED_CLAUDE/projects/$CONTAINER_PROJECT_NAME"/*.jsonl 2>/dev/null | head -1)
+if [ -n "$LATEST_SESSION" ]; then
+    RESUME_SESSION_ID=$(basename "$LATEST_SESSION" .jsonl)
+    # Find the container's session registry entry for this session ID
+    CONTAINER_SESSION_FILE=""
+    for f in "$ISOLATED_CLAUDE/sessions"/*.json; do
+        [ -f "$f" ] || continue
+        if grep -q "$RESUME_SESSION_ID" "$f" 2>/dev/null; then
+            CONTAINER_SESSION_FILE="$f"
+            break
+        fi
+    done
+    if [ -n "$CONTAINER_SESSION_FILE" ]; then
+        mkdir -p "$HOME/.claude/sessions"
+        # Rewrite cwd and PID for the host, keep everything else
+        local_resume_dir="${WORKTREE_DIR:-$PROJECT_DIR}"
+        [ ! -d "$local_resume_dir" ] && local_resume_dir="$PROJECT_DIR"
+        sed -e 's|"cwd": "[^"]*"|"cwd": "'"$local_resume_dir"'"|' \
+            -e 's|"pid": [0-9]*|"pid": '"$$"'|' \
+            "$CONTAINER_SESSION_FILE" > "$HOME/.claude/sessions/$$.json"
+    fi
 fi
 
 # Restore .git file so worktree is a valid git repo again
