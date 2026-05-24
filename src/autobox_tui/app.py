@@ -11,11 +11,57 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.reactive import var
-from textual.widgets import Footer, Input, Label, ListItem, ListView, Static
+from textual.screen import ModalScreen
+from textual.widgets import Button, Footer, Input, Label, ListItem, ListView, Static
 
 from autobox_tui.data import Agent, delete_agent, get_project_dir, list_agents, slugify
 
 AUTOBOX_BIN = shutil.which("autobox") or "autobox"
+
+
+class ConfirmDeleteScreen(ModalScreen[bool]):
+    """Confirmation dialog for deleting an agent with uncommitted changes."""
+
+    CSS = """
+    ConfirmDeleteScreen {
+        align: center middle;
+    }
+    #confirm-dialog {
+        width: 60;
+        height: auto;
+        padding: 1 2;
+        border: thick $error;
+        background: $surface;
+    }
+    #confirm-buttons {
+        margin-top: 1;
+        height: auto;
+        align: center middle;
+    }
+    #confirm-buttons Button {
+        margin: 0 1;
+    }
+    """
+
+    def __init__(self, agent_name: str, status: str) -> None:
+        super().__init__()
+        self._agent_name = agent_name
+        self._status = status
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="confirm-dialog"):
+            yield Static(
+                f"Delete [bold]{self._agent_name}[/bold]?\n\n"
+                f"This worktree has uncommitted changes ({self._status}).\n"
+                f"This action cannot be undone.",
+                markup=True,
+            )
+            with Vertical(id="confirm-buttons"):
+                yield Button("Delete", variant="error", id="confirm-yes")
+                yield Button("Cancel", variant="primary", id="confirm-no")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        self.dismiss(event.button.id == "confirm-yes")
 
 
 class AgentItem(ListItem):
@@ -169,12 +215,21 @@ class AgentsApp(App):
         agent_list = self.query_one("#agent-list", ListView)
         if agent_list.index is not None and agent_list.index < len(self.agents):
             agent = self.agents[agent_list.index]
-            err = delete_agent(self.project_dir, agent)
-            if err:
-                self.notify(f"Delete failed: {err}", severity="error")
+            if agent.status_summary != "clean":
+                self.push_screen(
+                    ConfirmDeleteScreen(agent.name, agent.status_summary),
+                    callback=lambda confirmed: self._do_delete(agent) if confirmed else None,
+                )
             else:
-                self.notify(f"Deleted {agent.name}")
-            self.refresh_agents()
+                self._do_delete(agent)
+
+    def _do_delete(self, agent: Agent) -> None:
+        err = delete_agent(self.project_dir, agent)
+        if err:
+            self.notify(f"Delete failed: {err}", severity="error")
+        else:
+            self.notify(f"Deleted {agent.name}")
+        self.refresh_agents()
 
     def action_focus_prompt(self) -> None:
         self.query_one("#prompt", Input).focus()
