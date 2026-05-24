@@ -154,6 +154,16 @@ if [ ! -d "$PROJECT_DIR/.git" ] && [ ! -f "$PROJECT_DIR/.git" ]; then
     exit 1
 fi
 
+# If we're inside a worktree, resolve to the main repo root to avoid nesting
+TOPLEVEL=$(git -C "$PROJECT_DIR" rev-parse --show-toplevel 2>/dev/null || true)
+COMMON_DIR=$(git -C "$PROJECT_DIR" rev-parse --git-common-dir 2>/dev/null || true)
+if [ -n "$COMMON_DIR" ] && [ "$COMMON_DIR" != ".git" ] && [ "$COMMON_DIR" != "$TOPLEVEL/.git" ]; then
+    # We're in a worktree — resolve to the main repo
+    MAIN_REPO=$(cd "$PROJECT_DIR" && cd "$(git rev-parse --git-common-dir)/.." && pwd)
+    echo -e "${YELLOW}Detected worktree — using main repo: $MAIN_REPO${NC}"
+    PROJECT_DIR="$MAIN_REPO"
+fi
+
 # Generate unique IDs
 CONTAINER_ID="$$-$(date +%s)"
 BRANCH_NAME="agent/autobox-$(date +%Y%m%d-%H%M%S)"
