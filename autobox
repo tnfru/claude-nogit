@@ -386,11 +386,12 @@ if [ "$USE_DOCKER" = true ]; then
     if [ ! -S "$DOCKER_SOCK" ]; then
         echo -e "${YELLOW}Warning: Docker socket not found at $DOCKER_SOCK — disabling Docker mount${NC}"
         USE_DOCKER=false
-    fi
-    if stat --version >/dev/null 2>&1; then
-        DOCKER_GID=$(stat -c '%g' "$DOCKER_SOCK")
     else
-        DOCKER_GID=$(stat -f '%g' "$DOCKER_SOCK")
+        if stat --version >/dev/null 2>&1; then
+            DOCKER_GID=$(stat -c '%g' "$DOCKER_SOCK")
+        else
+            DOCKER_GID=$(stat -f '%g' "$DOCKER_SOCK")
+        fi
     fi
 fi
 
