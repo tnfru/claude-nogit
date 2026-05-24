@@ -221,7 +221,11 @@ enter_worktree() {
     if [ "$CONTINUE_ON_HOST" = true ]; then
         echo
         echo -e "${GREEN}Resuming session in worktree (with normal permissions)...${NC}"
-        claude --resume || true
+        if [ -n "$RESUME_SESSION_ID" ]; then
+            claude --resume "$RESUME_SESSION_ID" || true
+        else
+            claude --resume || true
+        fi
     fi
     exec "$SHELL"
 }
@@ -478,6 +482,13 @@ set -e
 # Warn on non-zero exit code
 if [ "$CONTAINER_EXIT_CODE" -ne 0 ]; then
     echo -e "${YELLOW}Warning: Container exited with code $CONTAINER_EXIT_CODE${NC}"
+fi
+
+# Capture the most recent session ID for --resume (before cleanup deletes it)
+RESUME_SESSION_ID=""
+LATEST_SESSION=$(ls -t "$ISOLATED_CLAUDE/projects/$CONTAINER_PROJECT_NAME"/*.jsonl 2>/dev/null | head -1)
+if [ -n "$LATEST_SESSION" ]; then
+    RESUME_SESSION_ID=$(basename "$LATEST_SESSION" .jsonl)
 fi
 
 # Restore .git file so worktree is a valid git repo again
