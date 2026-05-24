@@ -50,6 +50,7 @@ def get_project_dir() -> str:
         ["git", "rev-parse", "--show-toplevel"],
         capture_output=True,
         text=True,
+        check=True,
     )
     return result.stdout.strip()
 
