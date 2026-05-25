@@ -211,6 +211,8 @@ class AgentsApp(App):
     project_dir: var[str] = var("")
     agents: var[list[Agent]] = var(list)
     attach_container: str = ""
+    enter_worktree: str = ""
+    focus_agents: bool = False
 
     def compose(self) -> ComposeResult:
         yield Static("", id="header")
@@ -258,6 +260,14 @@ class AgentsApp(App):
         self.query_one("#header", Static).update(f" autobox  ─  {short_path}")
         self.refresh_agents()
         self.set_interval(3.0, self._poll_status)
+
+        if self.focus_agents:
+            working = self.query_one("#working-list", AgentListView)
+            completed = self.query_one("#completed-list", AgentListView)
+            if working.display and working.children:
+                working.focus()
+            elif completed.display and completed.children:
+                completed.focus()
 
     def on_key(self, event: events.Key) -> None:
         prompt = self.query_one("#prompt", Input)
@@ -391,6 +401,9 @@ class AgentsApp(App):
             if agent.running:
                 self.attach_container = agent.container_name
                 self.exit()
+            elif os.path.isdir(agent.path):
+                self.enter_worktree = agent.path
+                self.exit()
 
     def action_delete(self) -> None:
         focus = self._focused_list()
@@ -449,13 +462,21 @@ class AgentsApp(App):
 
 
 def main() -> None:
+    focus_agents = False
     while True:
         app = AgentsApp()
+        app.focus_agents = focus_agents
         app.run()
         if app.attach_container:
             subprocess.run(
                 ["docker", "attach", f"--detach-keys={DETACH_KEYS}", app.attach_container]
             )
+            focus_agents = True
+            continue
+        if app.enter_worktree:
+            os.chdir(app.enter_worktree)
+            subprocess.run(["claude"])
+            focus_agents = True
             continue
         break
 
