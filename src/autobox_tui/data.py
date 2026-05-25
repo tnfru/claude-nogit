@@ -114,6 +114,10 @@ def list_agents(project_dir: str | None = None) -> list[Agent]:
     if not os.path.isdir(worktree_base):
         return []
 
+    subprocess.run(
+        ["git", "-C", project_dir, "worktree", "prune"],
+        capture_output=True,
+    )
     result = subprocess.run(
         ["git", "-C", project_dir, "worktree", "list", "--porcelain"],
         capture_output=True,
@@ -207,6 +211,18 @@ def cleanup_agent(project_dir: str, agent: Agent) -> None:
         capture_output=True,
         text=True,
     )
+
+
+def restore_gitfile(project_dir: str, agent: Agent) -> None:
+    """Restore .git file for a worktree without running full cleanup."""
+    worktree_base = os.path.join(project_dir, ".claude", "worktrees")
+    backup = os.path.join(worktree_base, f".gitfile-{agent.name}")
+    git_path = os.path.join(agent.path, ".git")
+    if os.path.isfile(backup):
+        if os.path.isdir(git_path):
+            shutil.rmtree(git_path)
+        shutil.copy2(backup, git_path)
+        os.remove(backup)
 
 
 def stop_agent(agent: Agent) -> None:

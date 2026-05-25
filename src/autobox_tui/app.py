@@ -25,6 +25,7 @@ from autobox_tui.data import (
     get_container_exit_code,
     get_project_dir,
     list_agents,
+    restore_gitfile,
     slugify,
     stop_agent,
 )
@@ -404,7 +405,7 @@ class AgentsApp(App):
                 self.attach_container = agent.container_name
                 self.exit()
             elif os.path.isdir(agent.path):
-                cleanup_agent(self.project_dir, agent)
+                restore_gitfile(self.project_dir, agent)
                 self.enter_worktree = agent.path
                 self.exit()
 
@@ -466,7 +467,9 @@ class AgentsApp(App):
 
 def main() -> None:
     focus_agents = False
+    original_cwd = os.getcwd()
     while True:
+        os.chdir(original_cwd)
         app = AgentsApp()
         app.focus_agents = focus_agents
         app.run()

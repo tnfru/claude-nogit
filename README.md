@@ -72,13 +72,15 @@ When you're done, changes are already on disk. Review the branch, merge or disca
 |-----|--------|
 | Type + Enter | Start a new agent with that task |
 | ↑/↓ or j/k | Navigate the agent list |
-| Enter | Attach to a running agent / enter completed worktree |
-| Ctrl-Q | Detach (agent keeps running) |
+| Enter | Attach to a running agent |
+| Ctrl-Q | Detach from agent (container keeps running) |
+| Enter | Open completed agent's worktree in Claude (normal permissions) |
+| /exit | Return from worktree session to TUI |
 | d | Delete an agent (confirms if running or dirty) |
 | t | Toggle dark/light theme |
 | q | Quit |
 
-Agents show their status: `● running`, file changes (`+3 ~1 -2`), or `clean`. Desktop notifications fire when an agent finishes.
+Agents are grouped into **Working** (running containers) and **Completed** (finished, with file changes or clean). Desktop notifications fire when an agent finishes.
 
 ## What's Protected
 
