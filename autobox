@@ -13,7 +13,67 @@ NC='\033[0m'
 
 # Subcommand: `autobox agents` launches the TUI
 if [ "${1:-}" = "agents" ]; then
-    exec autobox-agents
+    exec uv run --project "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" autobox-agents
+fi
+
+# Subcommand: `autobox cleanup <name> <project-dir>` cleans up a stopped agent
+if [ "${1:-}" = "cleanup" ]; then
+    CLEANUP_NAME="${2:?Usage: autobox cleanup <name> <project-dir>}"
+    CLEANUP_PROJECT="${3:-.}"
+    CLEANUP_PROJECT="$(cd "$CLEANUP_PROJECT" && pwd)"
+    WORKTREE_BASE="$CLEANUP_PROJECT/.claude/worktrees"
+    WORKTREE_DIR="$WORKTREE_BASE/$CLEANUP_NAME"
+    CONTAINER_NAME="autobox-$CLEANUP_NAME"
+    ISOLATED_CLAUDE="$WORKTREE_BASE/.config-$CLEANUP_NAME"
+    GITFILE_BACKUP="$WORKTREE_BASE/.gitfile-$CLEANUP_NAME"
+    HOST_PROJECT_NAME=$(echo "$CLEANUP_PROJECT" | sed 's|/|-|g')
+    CONTAINER_PROJECT_NAME="-workspace"
+
+    # Stop and remove container
+    docker stop "$CONTAINER_NAME" 2>/dev/null || true
+    docker rm "$CONTAINER_NAME" 2>/dev/null || true
+
+    # Sync sessions to host
+    if [ -d "$ISOLATED_CLAUDE/projects/$CONTAINER_PROJECT_NAME" ] && \
+       [ "$(ls -A "$ISOLATED_CLAUDE/projects/$CONTAINER_PROJECT_NAME" 2>/dev/null)" ]; then
+        mkdir -p "$HOME/.claude/projects/$HOST_PROJECT_NAME"
+        cp -a "$ISOLATED_CLAUDE/projects/$CONTAINER_PROJECT_NAME"/. "$HOME/.claude/projects/$HOST_PROJECT_NAME/" 2>/dev/null || true
+        resume_dir="$WORKTREE_DIR"
+        [ ! -d "$resume_dir" ] && resume_dir="$CLEANUP_PROJECT"
+        find "$HOME/.claude/projects/$HOST_PROJECT_NAME" -name "*.jsonl" 2>/dev/null | while read -r f; do
+            sed 's|"cwd": "/workspace"|"cwd": "'"$resume_dir"'"|g' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+        done
+    fi
+    if [ -d "$ISOLATED_CLAUDE/sessions" ] && [ "$(ls -A "$ISOLATED_CLAUDE/sessions" 2>/dev/null)" ]; then
+        mkdir -p "$HOME/.claude/sessions"
+        cp -a "$ISOLATED_CLAUDE/sessions"/. "$HOME/.claude/sessions/" 2>/dev/null || true
+    fi
+    if [ -d "$ISOLATED_CLAUDE/todos" ] && [ "$(ls -A "$ISOLATED_CLAUDE/todos" 2>/dev/null)" ]; then
+        mkdir -p "$HOME/.claude/todos"
+        cp -a "$ISOLATED_CLAUDE/todos"/. "$HOME/.claude/todos/" 2>/dev/null || true
+    fi
+
+    # Restore gitfile
+    if [ -f "$GITFILE_BACKUP" ] && [ -d "$WORKTREE_DIR" ]; then
+        rm -rf "$WORKTREE_DIR/.git"
+        cp "$GITFILE_BACKUP" "$WORKTREE_DIR/.git"
+        rm -f "$GITFILE_BACKUP"
+    fi
+
+    # Clean up config dir
+    rm -rf "$ISOLATED_CLAUDE" 2>/dev/null || true
+
+    # Remove worktree if clean
+    if [ -d "$WORKTREE_DIR" ]; then
+        BRANCH_NAME=$(git -C "$WORKTREE_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+        changes=$(git -C "$WORKTREE_DIR" status --porcelain 2>/dev/null || true)
+        if [ -z "$changes" ]; then
+            git -C "$CLEANUP_PROJECT" worktree remove "$WORKTREE_DIR" 2>/dev/null || true
+            [ -n "$BRANCH_NAME" ] && git -C "$CLEANUP_PROJECT" branch -d "$BRANCH_NAME" 2>/dev/null || true
+        fi
+    fi
+
+    exit 0
 fi
 
 # Parse arguments
@@ -26,6 +86,7 @@ DOCKER_NETWORK=""
 PROJECT_DIR=""
 AGENT_NAME=""
 EXISTING_WORKTREE=""
+DETACH=false
 CLAUDE_ARGS=()
 
 # State variables touched by the EXIT trap. Initialised up front so cleanup
@@ -79,6 +140,10 @@ while [[ $# -gt 0 ]]; do
             EXISTING_WORKTREE="$2"
             shift 2
             ;;
+        --detach)
+            DETACH=true
+            shift
+            ;;
         --network)
             DOCKER_NETWORK="$2"
             shift 2
@@ -108,6 +173,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --no-docker        Don't mount Docker socket"
             echo "  --name NAME        Name the worktree/branch (default: timestamp-based)"
             echo "  --worktree PATH    Re-enter an existing worktree instead of creating one"
+            echo "  --detach           Start container in background (for TUI use)"
             echo "  --network NAME     Connect container to a Docker network (e.g. for databases)"
             echo "  --purge-sessions   Delete all session data for the given project and exit"
             echo "  --continue         After exit, resume session on host (normal permissions)"
@@ -185,11 +251,9 @@ if [ -n "$COMMON_DIR" ] && [ "$COMMON_DIR" != ".git" ] && [ "$COMMON_DIR" != "$T
     PROJECT_DIR="$MAIN_REPO"
 fi
 
-# Generate unique IDs
-CONTAINER_ID="$$-$(date +%s)"
+# Generate paths
 WORKTREE_BASE="$PROJECT_DIR/.claude/worktrees"
 mkdir -p "$WORKTREE_BASE"
-ISOLATED_CLAUDE="/tmp/autobox-claude-$$"
 
 # Worktree naming: --name overrides the default timestamp, --worktree reuses existing
 if [ -n "$EXISTING_WORKTREE" ]; then
@@ -224,6 +288,16 @@ elif [ -n "$AGENT_NAME" ]; then
 else
     BRANCH_NAME="agent/autobox-$(date +%Y%m%d-%H%M%S)"
     WORKTREE_DIR="$WORKTREE_BASE/autobox-$$-$(date +%s)"
+fi
+
+# Set container ID and config path — stable names in detach mode, PID-based otherwise
+AGENT_BASENAME=$(basename "$WORKTREE_DIR")
+if [ "$DETACH" = true ]; then
+    CONTAINER_ID="$AGENT_BASENAME"
+    ISOLATED_CLAUDE="$WORKTREE_BASE/.config-$AGENT_BASENAME"
+else
+    CONTAINER_ID="$$-$(date +%s)"
+    ISOLATED_CLAUDE="/tmp/autobox-claude-$$"
 fi
 
 sync_sessions_to_host() {
@@ -341,8 +415,12 @@ cleanup() {
     exit $exit_code
 }
 
-# Set up signal handlers
-trap cleanup SIGINT SIGTERM EXIT
+# Set up signal handlers — in detach mode, only clean up setup artifacts on failure
+if [ "$DETACH" = true ]; then
+    trap 'restore_gitfile; rm -rf "$ISOLATED_CLAUDE" 2>/dev/null || true' EXIT
+else
+    trap cleanup SIGINT SIGTERM EXIT
+fi
 
 echo -e "${GREEN}=== autobox ===${NC}"
 echo -e "Project: $PROJECT_DIR"
@@ -360,7 +438,11 @@ else
 fi
 
 # Replace .git file/dir with empty directory so Docker can mount tmpfs over it
-GITFILE_BACKUP="$WORKTREE_BASE/.gitfile-backup-$$"
+if [ "$DETACH" = true ]; then
+    GITFILE_BACKUP="$WORKTREE_BASE/.gitfile-$AGENT_BASENAME"
+else
+    GITFILE_BACKUP="$WORKTREE_BASE/.gitfile-backup-$$"
+fi
 if [ -f "$WORKTREE_DIR/.git" ]; then
     cp "$WORKTREE_DIR/.git" "$GITFILE_BACKUP"
     rm "$WORKTREE_DIR/.git"
@@ -505,8 +587,12 @@ fi
 echo
 
 # Build docker run arguments
-DOCKER_ARGS=(
-    -it --rm
+if [ "$DETACH" = true ]; then
+    DOCKER_ARGS=( -dit )
+else
+    DOCKER_ARGS=( -it --rm )
+fi
+DOCKER_ARGS+=(
     --name "autobox-${CONTAINER_ID}"
     -v "$WORKTREE_DIR:/workspace"
     --tmpfs /workspace/.git:rw,exec,uid=1000,gid=1000
@@ -552,9 +638,23 @@ fi
 # propagate Claude's exit code instead of bailing out.
 # `${arr[@]+"${arr[@]}"}` keeps an empty CLAUDE_ARGS safe under bash 3.2 + set -u.
 set +e
-docker run "${DOCKER_ARGS[@]}" "$CONTAINER_IMAGE" --dangerously-skip-permissions --model 'claude-opus-4-6[1m]' ${CLAUDE_ARGS[@]+"${CLAUDE_ARGS[@]}"}
+if [ "$DETACH" = true ]; then
+    docker run "${DOCKER_ARGS[@]}" "$CONTAINER_IMAGE" --dangerously-skip-permissions --model 'claude-opus-4-6[1m]' ${CLAUDE_ARGS[@]+"${CLAUDE_ARGS[@]}"} >/dev/null
+else
+    docker run "${DOCKER_ARGS[@]}" "$CONTAINER_IMAGE" --dangerously-skip-permissions --model 'claude-opus-4-6[1m]' ${CLAUDE_ARGS[@]+"${CLAUDE_ARGS[@]}"}
+fi
 CONTAINER_EXIT_CODE=$?
 set -e
+
+# In detach mode, container is now running in background — exit immediately
+if [ "$DETACH" = true ]; then
+    if [ "$CONTAINER_EXIT_CODE" -ne 0 ]; then
+        echo -e "${RED}Error: Container failed to start${NC}" >&2
+        exit "$CONTAINER_EXIT_CODE"
+    fi
+    trap - EXIT
+    exit 0
+fi
 
 # Warn on non-zero exit code
 if [ "$CONTAINER_EXIT_CODE" -ne 0 ]; then

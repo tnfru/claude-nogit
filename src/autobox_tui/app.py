@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
 
 from textual import on, work
@@ -14,9 +13,19 @@ from textual.reactive import var
 from textual.screen import ModalScreen
 from textual.widgets import Button, Footer, Input, Label, ListItem, ListView, Static
 
-from autobox_tui.data import Agent, delete_agent, get_project_dir, list_agents, slugify
+from autobox_tui.data import (
+    AUTOBOX_BIN,
+    Agent,
+    cleanup_agent,
+    delete_agent,
+    get_project_dir,
+    list_agents,
+    slugify,
+    stop_agent,
+)
 
-AUTOBOX_BIN = shutil.which("autobox") or "autobox"
+DETACH_KEYS = "ctrl-q"
+ACTION_ATTACH = "attach"
 
 
 class ConfirmDeleteScreen(ModalScreen[bool]):
@@ -74,15 +83,17 @@ class AgentItem(ListItem):
     def compose(self) -> ComposeResult:
         a = self.agent
         status = a.status_summary
-        if status == "clean":
+        if a.running:
+            status_styled = f"[bold green]● {status}[/bold green]"
+        elif status == "clean":
             status_styled = f"[dim]{status}[/dim]"
         else:
-            status_styled = f"[green]{status}[/green]"
+            status_styled = f"[yellow]{status}[/yellow]"
 
         yield Static(
             f"  [bold]{a.name}[/bold]"
             f"{'':>{40 - len(a.name)}}"
-            f"{status_styled:>16}"
+            f"{status_styled:>24}"
             f"    [dim]{a.age}[/dim]",
             markup=True,
         )
@@ -153,11 +164,15 @@ class AgentsApp(App):
     BINDINGS = [
         Binding("q", "quit", "Quit"),
         Binding("d", "delete", "Delete"),
+        Binding("s", "stop", "Stop"),
+        Binding("j", "cursor_down", "Down", show=False),
+        Binding("k", "cursor_up", "Up", show=False),
         Binding("escape", "focus_prompt", "Prompt", show=False),
     ]
 
     project_dir: var[str] = var("")
     agents: var[list[Agent]] = var(list)
+    attach_container: str = ""
 
     def compose(self) -> ComposeResult:
         yield Static("", id="header")
@@ -166,7 +181,7 @@ class AgentsApp(App):
                 placeholder="Start new agent with a task...",
                 id="prompt",
             )
-        yield Label(" Agents", id="agents-label")
+        yield Label(f" Agents  [dim](Enter=attach  Ctrl-Q=detach  d=delete)[/dim]", id="agents-label")
         yield ListView(id="agent-list")
         yield Static(
             "No agents yet. Type a task above to start one.",
@@ -185,6 +200,22 @@ class AgentsApp(App):
             f" autobox  [dim]─[/dim]  {short_path} "
         )
         self.refresh_agents()
+        self.set_interval(3.0, self._poll_status)
+
+    def _poll_status(self) -> None:
+        """Periodically refresh to detect container state changes."""
+        old_states = {a.name: a.running for a in self.agents}
+        self.refresh_agents()
+        new_states = {a.name: a.running for a in self.agents}
+
+        # Auto-cleanup agents that just stopped
+        for name, was_running in old_states.items():
+            if was_running and not new_states.get(name, False):
+                agent = next((a for a in self.agents if a.name == name), None)
+                if agent:
+                    cleanup_agent(self.project_dir, agent)
+                    self.refresh_agents()
+                    self.notify(f"{name} finished")
 
     def refresh_agents(self) -> None:
         self.agents = list_agents(self.project_dir)
@@ -204,24 +235,39 @@ class AgentsApp(App):
             return
         event.input.value = ""
         name = slugify(text)
-        self.launch_autobox(name=name, prompt=text)
+        self.spawn_agent(name=name, prompt=text)
 
     @on(ListView.Selected, "#agent-list")
     def on_agent_selected(self, event: ListView.Selected) -> None:
         if isinstance(event.item, AgentItem):
-            self.launch_autobox(worktree=event.item.agent.path)
+            agent = event.item.agent
+            if agent.running:
+                self.attach_container = agent.container_name
+                self.exit()
+            else:
+                self.notify("Agent not running. Start a new one from the prompt.", severity="warning")
 
     def action_delete(self) -> None:
         agent_list = self.query_one("#agent-list", ListView)
         if agent_list.index is not None and agent_list.index < len(self.agents):
             agent = self.agents[agent_list.index]
-            if agent.status_summary != "clean":
+            if agent.running or agent.status_summary != "clean":
+                label = "running" if agent.running else agent.status_summary
                 self.push_screen(
-                    ConfirmDeleteScreen(agent.name, agent.status_summary),
+                    ConfirmDeleteScreen(agent.name, label),
                     callback=lambda confirmed: self._do_delete(agent) if confirmed else None,
                 )
             else:
                 self._do_delete(agent)
+
+    def action_stop(self) -> None:
+        agent_list = self.query_one("#agent-list", ListView)
+        if agent_list.index is not None and agent_list.index < len(self.agents):
+            agent = self.agents[agent_list.index]
+            if agent.running:
+                stop_agent(agent)
+                self.notify(f"Stopped {agent.name}")
+                self.refresh_agents()
 
     def _do_delete(self, agent: Agent) -> None:
         err = delete_agent(self.project_dir, agent)
@@ -231,40 +277,47 @@ class AgentsApp(App):
             self.notify(f"Deleted {agent.name}")
         self.refresh_agents()
 
+    def action_cursor_down(self) -> None:
+        agent_list = self.query_one("#agent-list", ListView)
+        agent_list.focus()
+        agent_list.action_cursor_down()
+
+    def action_cursor_up(self) -> None:
+        agent_list = self.query_one("#agent-list", ListView)
+        agent_list.focus()
+        agent_list.action_cursor_up()
+
     def action_focus_prompt(self) -> None:
         self.query_one("#prompt", Input).focus()
 
     @work(thread=True)
-    def launch_autobox(
-        self,
-        name: str | None = None,
-        prompt: str | None = None,
-        worktree: str | None = None,
-    ) -> None:
-        cmd = [AUTOBOX_BIN]
-        if name:
-            cmd.extend(["--name", name])
-        if worktree:
-            cmd.extend(["--worktree", worktree])
-        cmd.append("--")
-        if prompt:
-            cmd.append(prompt)
-
-        with self.app.suspend():
-            result = subprocess.run(cmd)
+    def spawn_agent(self, name: str, prompt: str) -> None:
+        """Start a new agent in detached mode."""
+        cmd = [AUTOBOX_BIN, "--detach", "--name", name, "--", prompt]
+        result = subprocess.run(cmd, capture_output=True, text=True)
 
         if result.returncode != 0:
             self.app.call_from_thread(
                 self.notify,
-                f"autobox exited with code {result.returncode}",
+                f"Failed to start agent: {result.stderr.strip()}",
                 severity="error",
+            )
+        else:
+            self.app.call_from_thread(
+                self.notify, f"Started {name}"
             )
         self.app.call_from_thread(self.refresh_agents)
 
-
 def main() -> None:
-    app = AgentsApp()
-    app.run()
+    while True:
+        app = AgentsApp()
+        app.run()
+        if app.attach_container:
+            subprocess.run(
+                ["docker", "attach", f"--detach-keys={DETACH_KEYS}", app.attach_container]
+            )
+            continue
+        break
 
 
 if __name__ == "__main__":
