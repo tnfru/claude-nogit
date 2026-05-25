@@ -28,6 +28,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   nano \
   vim \
   rsync \
+  tmux \
   pipewire \
   sound-theme-freedesktop \
   && apt-get clean && rm -rf /var/lib/apt/lists/*
@@ -108,6 +109,7 @@ ENV TERM=xterm-256color
 COPY init-firewall.sh /usr/local/bin/
 COPY docker-proxy.py /usr/local/bin/
 COPY entrypoint.sh /usr/local/bin/
+COPY tmux.conf /etc/tmux.conf
 USER root
 RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/docker-proxy.py /usr/local/bin/entrypoint.sh && \
     echo "$USERNAME ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh" > /etc/sudoers.d/$USERNAME-firewall && \

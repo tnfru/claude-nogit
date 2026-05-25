@@ -29,4 +29,12 @@ if [ -d "/workspace" ] && [ ! -d "/workspace/.git/objects" ]; then
     git -C /workspace tag baseline
 fi
 
-exec claude "$@"
+# Run claude inside tmux for scrollback that persists across attach/detach.
+# Interactive mode (docker run -it): tmux attaches directly.
+# Detached mode (docker run -dit): tmux starts detached, PID 1 waits.
+if [ -t 0 ] && [ -z "${AUTOBOX_DETACH:-}" ]; then
+    exec tmux -f /etc/tmux.conf new-session -s claude "claude $*"
+else
+    tmux -f /etc/tmux.conf new-session -d -s claude "claude $*; tmux wait-for -S done"
+    tmux wait-for done || true
+fi
