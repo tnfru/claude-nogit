@@ -69,6 +69,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --name)
             AGENT_NAME="$2"
+            if [[ ! "$AGENT_NAME" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+                echo -e "${RED}Error: --name must contain only alphanumeric characters, hyphens, and underscores${NC}"
+                exit 1
+            fi
             shift 2
             ;;
         --worktree)
