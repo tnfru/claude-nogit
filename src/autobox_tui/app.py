@@ -28,7 +28,7 @@ from autobox_tui.data import (
     stop_agent,
 )
 
-DETACH_KEYS = "ctrl-q"
+TMUX_SESSION = "claude"
 THEME_FILE = os.path.join(
     os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")),
     "autobox",
@@ -474,7 +474,8 @@ def main() -> None:
         app.run()
         if app.attach_container:
             subprocess.run(
-                ["docker", "attach", f"--detach-keys={DETACH_KEYS}", app.attach_container]
+                ["docker", "exec", "-it", app.attach_container,
+                 "tmux", "attach", "-t", TMUX_SESSION]
             )
             focus_agents = True
             continue

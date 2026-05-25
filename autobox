@@ -597,7 +597,7 @@ echo
 
 # Build docker run arguments
 if [ "$DETACH" = true ]; then
-    DOCKER_ARGS=( -dit )
+    DOCKER_ARGS=( -dit -e AUTOBOX_DETACH=1 )
 else
     DOCKER_ARGS=( -it --rm )
 fi
