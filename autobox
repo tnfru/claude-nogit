@@ -13,7 +13,16 @@ NC='\033[0m'
 
 # Subcommand: `autobox agents` launches the TUI
 if [ "${1:-}" = "agents" ]; then
-    exec uv run --project "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" autobox-agents
+    tui_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    if [ ! -f "$tui_dir/pyproject.toml" ]; then
+        tui_dir="${XDG_DATA_HOME:-$HOME/.local/share}/autobox"
+    fi
+    if [ ! -f "$tui_dir/pyproject.toml" ]; then
+        echo -e "${RED}Error: autobox TUI not found. Reinstall with:${NC}" >&2
+        echo "  curl -sSL https://raw.githubusercontent.com/tnfru/autobox/master/install.sh | bash" >&2
+        exit 1
+    fi
+    exec uv run --project "$tui_dir" autobox-agents
 fi
 
 # Subcommand: `autobox cleanup <name> <project-dir>` cleans up a stopped agent
