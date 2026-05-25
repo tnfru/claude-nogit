@@ -251,8 +251,14 @@ class AgentsApp(App):
             cmd.append(prompt)
 
         with self.app.suspend():
-            subprocess.run(cmd)
+            result = subprocess.run(cmd)
 
+        if result.returncode != 0:
+            self.app.call_from_thread(
+                self.notify,
+                f"autobox exited with code {result.returncode}",
+                severity="error",
+            )
         self.app.call_from_thread(self.refresh_agents)
 
 
