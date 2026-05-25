@@ -76,6 +76,21 @@ def _get_running_containers() -> set[str]:
     return set(result.stdout.strip().splitlines()) if result.stdout.strip() else set()
 
 
+def get_container_exit_code(container_name: str) -> int | None:
+    """Get exit code of a stopped container, or None if not found."""
+    result = subprocess.run(
+        ["docker", "inspect", "--format", "{{.State.ExitCode}}", container_name],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return None
+    try:
+        return int(result.stdout.strip())
+    except ValueError:
+        return None
+
+
 def _get_exited_containers() -> set[str]:
     """Get names of exited (stopped) autobox containers."""
     result = subprocess.run(

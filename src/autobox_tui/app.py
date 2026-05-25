@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 
 from textual import events, on, work
@@ -19,6 +20,7 @@ from autobox_tui.data import (
     Agent,
     cleanup_agent,
     delete_agent,
+    get_container_exit_code,
     get_project_dir,
     list_agents,
     slugify,
@@ -26,7 +28,11 @@ from autobox_tui.data import (
 )
 
 DETACH_KEYS = "ctrl-q"
-THEME_FILE = os.path.join(os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")), "autobox", "theme")
+THEME_FILE = os.path.join(
+    os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")),
+    "autobox",
+    "theme",
+)
 
 # NvChad onenord
 THEME_DARK = Theme(
@@ -107,6 +113,14 @@ class ConfirmDeleteScreen(ModalScreen[bool]):
         self.dismiss(event.button.id == "confirm-yes")
 
 
+class AgentListView(ListView):
+    """ListView that auto-selects the first item on focus."""
+
+    def on_focus(self) -> None:
+        if self.index is None and self.children:
+            self.index = 0
+
+
 class AgentItem(ListItem):
 
     def __init__(self, agent: Agent) -> None:
@@ -152,13 +166,14 @@ class AgentsApp(App):
         margin: 0;
     }
 
-    #agents-label {
+    .section-label {
         padding: 1 2 0 2;
         color: $text-muted;
     }
 
-    #agent-list {
-        height: 1fr;
+    .agent-list {
+        height: auto;
+        max-height: 50%;
         margin: 0 1;
     }
 
@@ -187,7 +202,6 @@ class AgentsApp(App):
     BINDINGS = [
         Binding("q", "quit", "Quit"),
         Binding("d", "delete", "Delete"),
-        Binding("s", "stop", "Stop"),
         Binding("t", "toggle_theme", "Theme"),
         Binding("j", "cursor_down", show=False),
         Binding("k", "cursor_up", show=False),
@@ -202,11 +216,10 @@ class AgentsApp(App):
         yield Static("", id="header")
         with Vertical(id="prompt-container"):
             yield Input(placeholder="Start new agent with a task...", id="prompt")
-        yield Label(
-            " Agents  [dim]Enter=attach  Ctrl-Q=detach[/dim]",
-            id="agents-label",
-        )
-        yield ListView(id="agent-list")
+        yield Label(" Working", classes="section-label", id="working-label")
+        yield AgentListView(id="working-list", classes="agent-list")
+        yield Label(" Completed", classes="section-label", id="completed-label")
+        yield AgentListView(id="completed-list", classes="agent-list")
         yield Static(
             "No agents yet — type a task above to start one.",
             id="empty-state",
@@ -217,7 +230,6 @@ class AgentsApp(App):
         self.register_theme(THEME_DARK)
         self.register_theme(THEME_LIGHT)
 
-        # Restore saved theme, or detect from system
         saved = None
         try:
             saved = open(THEME_FILE).read().strip()
@@ -249,16 +261,47 @@ class AgentsApp(App):
 
     def on_key(self, event: events.Key) -> None:
         prompt = self.query_one("#prompt", Input)
-        agent_list = self.query_one("#agent-list", ListView)
+        working = self.query_one("#working-list", AgentListView)
+        completed = self.query_one("#completed-list", AgentListView)
 
         if event.key == "down" and prompt.has_focus:
-            if agent_list.display and self.agents:
-                agent_list.focus()
+            if working.display and working.children:
+                working.focus()
+                working.index = 0
                 event.prevent_default()
-        elif event.key == "up" and agent_list.has_focus:
-            if agent_list.index is None or agent_list.index == 0:
+            elif completed.display and completed.children:
+                completed.focus()
+                completed.index = 0
+                event.prevent_default()
+        elif event.key == "up" and completed.has_focus:
+            if completed.index is None or completed.index == 0:
+                if working.display and working.children:
+                    working.focus()
+                    working.index = len(working.children) - 1
+                else:
+                    prompt.focus()
+                event.prevent_default()
+        elif event.key == "up" and working.has_focus:
+            if working.index is None or working.index == 0:
                 prompt.focus()
                 event.prevent_default()
+        elif event.key == "down" and working.has_focus:
+            if working.index is not None and working.index >= len(working.children) - 1:
+                if completed.display and completed.children:
+                    completed.focus()
+                    completed.index = 0
+                    event.prevent_default()
+
+    def _focused_list(self) -> tuple[ListView, list[Agent]] | None:
+        working = self.query_one("#working-list", AgentListView)
+        completed = self.query_one("#completed-list", AgentListView)
+        running = [a for a in self.agents if a.running]
+        done = [a for a in self.agents if not a.running]
+        if working.has_focus:
+            return working, running
+        if completed.has_focus:
+            return completed, done
+        return None
 
     def action_toggle_theme(self) -> None:
         self.theme = "autobox-light" if self.theme == "autobox-dark" else "autobox-dark"
@@ -270,28 +313,67 @@ class AgentsApp(App):
             pass
 
     def _poll_status(self) -> None:
-        old_states = {a.name: a.running for a in self.agents}
+        old_states = {a.name: (a.running, a.container_name) for a in self.agents}
         self.refresh_agents()
-        new_states = {a.name: a.running for a in self.agents}
 
-        for name, was_running in old_states.items():
-            if was_running and not new_states.get(name, False):
-                agent = next((a for a in self.agents if a.name == name), None)
-                if agent:
-                    cleanup_agent(self.project_dir, agent)
-                    self.refresh_agents()
-                    self.notify(f"{name} finished")
+        for name, (was_running, container) in old_states.items():
+            if not was_running:
+                continue
+            new_agent = next((a for a in self.agents if a.name == name), None)
+            if new_agent and not new_agent.running:
+                get_container_exit_code(container)
+                cleanup_agent(self.project_dir, new_agent)
+                self.refresh_agents()
+                self._desktop_notify(f"{name} — done")
+                self.bell()
+
+    @staticmethod
+    def _desktop_notify(msg: str) -> None:
+        notify_bin = shutil.which("notify-send")
+        if notify_bin:
+            subprocess.Popen(
+                [notify_bin, "-a", "autobox", "autobox", msg],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
 
     def refresh_agents(self) -> None:
-        self.agents = list_agents(self.project_dir)
-        agent_list = self.query_one("#agent-list", ListView)
-        agent_list.clear()
-        for agent in self.agents:
-            agent_list.append(AgentItem(agent))
+        new_agents = list_agents(self.project_dir)
 
-        has_agents = len(self.agents) > 0
-        agent_list.display = has_agents
-        self.query_one("#empty-state", Static).display = not has_agents
+        old_key = [(a.name, a.running, a.status_summary) for a in self.agents]
+        new_key = [(a.name, a.running, a.status_summary) for a in new_agents]
+        if old_key == new_key:
+            return
+
+        self.agents = new_agents
+        running = [a for a in self.agents if a.running]
+        done = [a for a in self.agents if not a.running]
+
+        working_list = self.query_one("#working-list", AgentListView)
+        completed_list = self.query_one("#completed-list", AgentListView)
+
+        saved_working = working_list.index
+        saved_completed = completed_list.index
+
+        working_list.clear()
+        for agent in running:
+            working_list.append(AgentItem(agent))
+
+        completed_list.clear()
+        for agent in done:
+            completed_list.append(AgentItem(agent))
+
+        if saved_working is not None and saved_working < len(running):
+            working_list.index = saved_working
+        if saved_completed is not None and saved_completed < len(done):
+            completed_list.index = saved_completed
+
+        has_any = bool(self.agents)
+        self.query_one("#working-label", Label).display = bool(running)
+        working_list.display = bool(running)
+        self.query_one("#completed-label", Label).display = bool(done)
+        completed_list.display = bool(done)
+        self.query_one("#empty-state", Static).display = not has_any
 
     @on(Input.Submitted, "#prompt")
     def on_prompt_submitted(self, event: Input.Submitted) -> None:
@@ -302,23 +384,21 @@ class AgentsApp(App):
         name = slugify(text)
         self.spawn_agent(name=name, prompt=text)
 
-    @on(ListView.Selected, "#agent-list")
+    @on(ListView.Selected)
     def on_agent_selected(self, event: ListView.Selected) -> None:
         if isinstance(event.item, AgentItem):
             agent = event.item.agent
             if agent.running:
                 self.attach_container = agent.container_name
                 self.exit()
-            else:
-                self.notify(
-                    "Agent not running — start a new one from the prompt.",
-                    severity="warning",
-                )
 
     def action_delete(self) -> None:
-        agent_list = self.query_one("#agent-list", ListView)
-        if agent_list.index is not None and agent_list.index < len(self.agents):
-            agent = self.agents[agent_list.index]
+        focus = self._focused_list()
+        if not focus:
+            return
+        lv, agent_list = focus
+        if lv.index is not None and lv.index < len(agent_list):
+            agent = agent_list[lv.index]
             if agent.running or agent.status_summary != "clean":
                 label = "running" if agent.running else agent.status_summary
                 self.push_screen(
@@ -328,32 +408,28 @@ class AgentsApp(App):
             else:
                 self._do_delete(agent)
 
-    def action_stop(self) -> None:
-        agent_list = self.query_one("#agent-list", ListView)
-        if agent_list.index is not None and agent_list.index < len(self.agents):
-            agent = self.agents[agent_list.index]
-            if agent.running:
-                stop_agent(agent)
-                self.notify(f"Stopped {agent.name}")
-                self.refresh_agents()
-
     def _do_delete(self, agent: Agent) -> None:
         err = delete_agent(self.project_dir, agent)
         if err:
             self.notify(f"Delete failed: {err}", severity="error")
-        else:
-            self.notify(f"Deleted {agent.name}")
         self.refresh_agents()
 
     def action_cursor_down(self) -> None:
-        agent_list = self.query_one("#agent-list", ListView)
-        agent_list.focus()
-        agent_list.action_cursor_down()
+        focus = self._focused_list()
+        if focus:
+            focus[0].action_cursor_down()
+        else:
+            working = self.query_one("#working-list", AgentListView)
+            completed = self.query_one("#completed-list", AgentListView)
+            if working.display:
+                working.focus()
+            elif completed.display:
+                completed.focus()
 
     def action_cursor_up(self) -> None:
-        agent_list = self.query_one("#agent-list", ListView)
-        agent_list.focus()
-        agent_list.action_cursor_up()
+        focus = self._focused_list()
+        if focus:
+            focus[0].action_cursor_up()
 
     def action_focus_prompt(self) -> None:
         self.query_one("#prompt", Input).focus()
@@ -369,8 +445,6 @@ class AgentsApp(App):
                 f"Failed to start: {result.stderr.strip()}",
                 severity="error",
             )
-        else:
-            self.app.call_from_thread(self.notify, f"Started {name}")
         self.app.call_from_thread(self.refresh_agents)
 
 
