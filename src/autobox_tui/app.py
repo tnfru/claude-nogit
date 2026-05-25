@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import os
 import shutil
-import signal
 import subprocess
-import sys
 
 from textual import events, on, work
 from textual.app import App, ComposeResult
@@ -368,25 +366,26 @@ class AgentsApp(App):
         saved_working = working_list.index
         saved_completed = completed_list.index
 
-        working_list.clear()
-        for agent in running:
-            working_list.append(AgentItem(agent))
+        with self.batch_update():
+            working_list.clear()
+            for agent in running:
+                working_list.append(AgentItem(agent))
 
-        completed_list.clear()
-        for agent in done:
-            completed_list.append(AgentItem(agent))
+            completed_list.clear()
+            for agent in done:
+                completed_list.append(AgentItem(agent))
 
-        if saved_working is not None and saved_working < len(running):
-            working_list.index = saved_working
-        if saved_completed is not None and saved_completed < len(done):
-            completed_list.index = saved_completed
+            if saved_working is not None and saved_working < len(running):
+                working_list.index = saved_working
+            if saved_completed is not None and saved_completed < len(done):
+                completed_list.index = saved_completed
 
-        has_any = bool(self.agents)
-        self.query_one("#working-label", Label).display = bool(running)
-        working_list.display = bool(running)
-        self.query_one("#completed-label", Label).display = bool(done)
-        completed_list.display = bool(done)
-        self.query_one("#empty-state", Static).display = not has_any
+            has_any = bool(self.agents)
+            self.query_one("#working-label", Label).display = bool(running)
+            working_list.display = bool(running)
+            self.query_one("#completed-label", Label).display = bool(done)
+            completed_list.display = bool(done)
+            self.query_one("#empty-state", Static).display = not has_any
 
     @on(Input.Submitted, "#prompt")
     def on_prompt_submitted(self, event: Input.Submitted) -> None:
@@ -481,27 +480,7 @@ def main() -> None:
             continue
         if app.enter_worktree:
             os.chdir(app.enter_worktree)
-            try:
-                proc = subprocess.Popen(["claude"], process_group=0)
-                fd = sys.stdin.fileno()
-                # Give claude the terminal (ignore SIGTTOU while we do it)
-                old_handler = signal.signal(signal.SIGTTOU, signal.SIG_IGN)
-                os.tcsetpgrp(fd, proc.pid)
-                signal.signal(signal.SIGTTOU, old_handler)
-                try:
-                    _, status = os.waitpid(proc.pid, os.WUNTRACED)
-                finally:
-                    old_handler = signal.signal(signal.SIGTTOU, signal.SIG_IGN)
-                    os.tcsetpgrp(fd, os.getpgrp())
-                    signal.signal(signal.SIGTTOU, old_handler)
-                if os.WIFSTOPPED(status):
-                    os.killpg(proc.pid, signal.SIGTERM)
-                    try:
-                        os.waitpid(proc.pid, 0)
-                    except ChildProcessError:
-                        pass
-            except (KeyboardInterrupt, OSError):
-                pass
+            subprocess.run(["claude"])
             focus_agents = True
             continue
         break
