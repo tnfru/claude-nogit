@@ -235,11 +235,19 @@ def delete_agent(project_dir: str, agent: Agent) -> str | None:
         if result.returncode != 0:
             return result.stderr.strip()
 
+    # Prune stale worktree registrations (dir removed but git still tracks them)
     subprocess.run(
-        ["git", "-C", project_dir, "branch", "-D", agent.branch],
+        ["git", "-C", project_dir, "worktree", "prune"],
         capture_output=True,
         text=True,
     )
+
+    if agent.branch:
+        subprocess.run(
+            ["git", "-C", project_dir, "branch", "-D", agent.branch],
+            capture_output=True,
+            text=True,
+        )
     return None
 
 
