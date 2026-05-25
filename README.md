@@ -1,35 +1,100 @@
 # autobox
 
-### 🐳 Run Claude Code autonomously. Keep your git history safe.
+### Run multiple Claude agents in parallel. Keep your git history safe.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square)](http://makeapullrequest.com)
 [![Docker](https://img.shields.io/badge/Docker-required-blue?logo=docker&logoColor=white)](https://www.docker.com/)
 [![Claude Code](https://img.shields.io/badge/Claude_Code-required-blueviolet)](https://claude.ai/download)
 
-Give Claude `--dangerously-skip-permissions` without the danger. Your `.git` never enters the container — Claude gets full autonomy over your code, but can't touch your history, force-push, or delete branches. When it's done, you land in the worktree to review everything it did.
+`--dangerously-skip-permissions` without the danger. Each agent runs in its own Docker container on a separate git worktree. Your `.git` is hidden behind a tmpfs — Claude gets full autonomy but can't touch your history, force-push, or delete branches. Spawn agents, attach to any of them, detach, come back later.
 
-## ✨ Features
+https://github.com/user-attachments/assets/565bf780-cf2d-4c16-a1b7-c471733a24de
 
-- 🔒 **Git Isolation** — `.git` is hidden behind a tmpfs; your history is untouchable
-- 🌿 **Worktree-Based** — Changes go to a git worktree on a new branch, not your working tree
-- 🔁 **Session Continuity** — Claude resumes in the worktree with normal permissions for review
-- 🛡️ **Network Firewall** — Optional allowlist restricting traffic to Anthropic, GitHub, npm, and PyPI
-- 🐳 **Docker Socket** — Let Claude manage sibling containers with `--docker`
-- 📦 **Lightweight Image** — `debian:bookworm-slim` with native Claude binary (~591MB vs ~1.4GB with Node.js)
+## Quick Start
 
-## 🛡️ What's Protected
+```bash
+# Install
+curl -sSL https://raw.githubusercontent.com/tnfru/autobox/master/install.sh | bash
 
-| | Threat | Protection |
-|---|--------|------------|
-| 🔨 | `git push --force` | `.git` is hidden behind a tmpfs inside the container |
-| 💥 | `git reset --hard` | No real git history to reset |
-| ✏️ | Rewrite commit history | No real commits to rewrite |
-| 🗑️ | Delete branches | No branches accessible |
-| 🌐 | Exfiltrate code via network | Firewall restricts traffic to Anthropic, GitHub, npm, and PyPI |
-| 📂 | Modify files outside project | Container filesystem isolation |
+# Launch the agent manager
+autobox agents
+```
 
-## 📦 Installation
+Type a task, hit Enter. The agent spawns in the background. Select it and press Enter to attach. `Ctrl-Q` to detach — the agent keeps working. Repeat.
+
+```bash
+# Or run a single agent directly
+autobox -- -p "fix all failing tests"
+```
+
+**Requires:** [Docker](https://www.docker.com/) and [Claude Code](https://claude.ai/download)
+
+## How It Works
+
+```
+  ┌──────────────────────────────────────────────────────────┐
+  │  autobox agents (TUI)                                    │
+  │                                                          │
+  │  ┌─────────────────┐  ┌─────────────────┐               │
+  │  │ fix-auth   ● run│  │ add-tests  ● run│  ...          │
+  │  │ agent/fix-auth   │  │ agent/add-tests │               │
+  │  └────────┬────────┘  └────────┬────────┘               │
+  │           │                    │                          │
+  └───────────┼────────────────────┼──────────────────────────┘
+              │                    │
+              ▼                    ▼
+  ┌──────────────────┐  ┌──────────────────┐
+  │  Docker container │  │  Docker container │
+  │                   │  │                   │
+  │  Claude Code      │  │  Claude Code      │
+  │  --skip-perms     │  │  --skip-perms     │
+  │                   │  │                   │
+  │  /workspace ──────│──│── git worktree    │
+  │  .git = tmpfs     │  │  .git = tmpfs     │
+  └──────────────────┘  └──────────────────┘
+```
+
+Each agent gets:
+
+1. **A git worktree** on a new branch — instant checkout, no file copying
+2. **A Docker container** with `.git` hidden behind a tmpfs
+3. **Full autonomy** — `--dangerously-skip-permissions` with Docker access proxied for safety
+4. **Its own session** — conversations persist across attach/detach
+
+When you're done, changes are already on disk. Review the branch, merge or discard.
+
+## Agent Manager
+
+`autobox agents` launches a TUI for managing multiple agents:
+
+| Key | Action |
+|-----|--------|
+| Type + Enter | Start a new agent with that task |
+| ↑/↓ or j/k | Navigate the agent list |
+| Enter | Attach to a running agent |
+| Ctrl-Q | Detach from agent (container keeps running) |
+| Enter | Open completed agent's worktree in Claude (normal permissions) |
+| /exit | Return from worktree session to TUI |
+| d | Delete an agent (confirms if running or dirty) |
+| t | Toggle dark/light theme |
+| q | Quit |
+
+Agents are grouped into **Working** (running containers) and **Completed** (finished, with file changes or clean). Desktop notifications fire when an agent finishes.
+
+## What's Protected
+
+| Threat | Protection |
+|--------|------------|
+| `git push --force` | `.git` hidden behind tmpfs — no remote access |
+| `git reset --hard` | No real git history in the container |
+| Rewrite commits | No commits to rewrite |
+| Delete branches | No branches accessible |
+| Exfiltrate code | Optional firewall restricts to Anthropic, GitHub, npm, PyPI |
+| Escape via Docker | Socket proxy blocks privileged mode, host namespaces, out-of-workspace mounts |
+| Modify files outside project | Container filesystem isolation |
+
+## Installation
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/tnfru/autobox/master/install.sh | bash
@@ -40,165 +105,139 @@ curl -sSL https://raw.githubusercontent.com/tnfru/autobox/master/install.sh | ba
 
 ```bash
 git clone https://github.com/tnfru/autobox.git
-cp autobox/autobox ~/.local/bin/
-# Ensure ~/.local/bin is in your PATH
+cd autobox
+cp autobox ~/.local/bin/
+pip install -e .  # for the TUI (autobox agents)
 ```
 
 </details>
 
-**Prerequisites:** [Docker](https://www.docker.com/) and [Claude Code](https://claude.ai/download)
-
-## 🚀 Quick Start
+<details>
+<summary>From source (development)</summary>
 
 ```bash
-autobox                              # run in current directory
-autobox /path/to/project             # run on a specific project
-autobox -- -p "fix all failing tests" # give Claude a task directly
-autobox -- --resume                  # resume a previous conversation
+git clone https://github.com/tnfru/autobox.git
+cd autobox
+uv pip install -e .
+cp autobox ~/.local/bin/
 ```
 
-## ⚙️ Options
+</details>
+
+## Options
 
 | Flag | Description |
 |------|-------------|
-| `--continue` | (default) After container exits, resume session in worktree with normal permissions |
-| `--no-continue` | Drop into worktree shell without resuming Claude |
-| `--firewall` | Restrict outbound traffic to Anthropic API, GitHub, npm, and PyPI |
-| `--no-firewall` | (default) Unrestricted network access |
-| `--docker` | Mount Docker socket (lets Claude manage sibling containers) |
+| `--name NAME` | Name the agent/worktree (default: derived from task) |
+| `--worktree PATH` | Re-enter an existing worktree instead of creating one |
+| `--detach` | Start container in background (used by TUI) |
+| `--firewall` | Restrict outbound traffic to Anthropic, GitHub, npm, PyPI |
+| `--no-firewall` | (default) Unrestricted network |
+| `--docker` | (default) Mount Docker socket via security proxy |
+| `--no-docker` | Don't mount Docker socket |
 | `--network NAME` | Connect to a Docker network (e.g. for databases) |
-| `--full` | Include `node_modules`, `.venv`, etc. in the worktree |
+| `--continue` | After container exits, resume session on host with normal permissions |
+| `--no-continue` | (default) Drop into worktree shell without resuming |
+| `--full` | Include `node_modules`, `.venv` in the worktree |
 | `--rebuild` | Force Docker image rebuild |
-| `--purge-sessions` | Delete saved session/todo data for the project |
+| `--purge-sessions` | Delete saved session data for the project |
 | `-- [args]` | Pass remaining arguments to Claude |
 
-## 🔎 How It Compares
+## Standalone Usage
 
-| | autobox | Bare `--dangerously-skip-permissions` | Process-level sandboxes |
-|---|---|---|---|
-| **Git safety** | `.git` hidden behind tmpfs | `.git` fully writable | `.git` writable (within project dir) |
-| **Network control** | Firewall allowlist | Unrestricted | Varies |
-| **Blast radius** | Container only | Entire system | Project directory |
-| **Session continuity** | Resumes in worktree | N/A | Native |
-| **Platform** | Linux, macOS (Docker) | Any | OS-specific |
-| **Overhead** | Worktree checkout + container startup | None | Near zero |
-
-## 📖 Examples
+Don't need the TUI? Run a single agent directly:
 
 ```bash
-# Let Claude fix all tests autonomously, then review in worktree
-autobox -- -p "fix all failing tests"
+# Current directory
+autobox
+
+# Specific project
+autobox /path/to/project
+
+# Give Claude a task
+autobox -- -p "refactor the auth module"
 
 # Resume a previous conversation
 autobox -- --resume
 
-# Restrict network access
+# With network firewall
 autobox --firewall
 
 # Connect to a local database
 autobox --network my-network
-
-# Let Claude spin up sibling containers
-autobox --docker
-
-# Include dependencies in the worktree
-autobox --full
 ```
 
-## 🔁 The Workflow
+When the container exits, you land in the worktree to review changes.
+
+## How It Compares
+
+| | autobox | Bare `--dangerously-skip-permissions` | Process sandboxes |
+|---|---------|---------------------------------------|-------------------|
+| **Git safety** | `.git` hidden behind tmpfs | `.git` fully writable | `.git` writable |
+| **Parallel agents** | TUI manages multiple agents | Manual terminal juggling | N/A |
+| **Network control** | Firewall allowlist | Unrestricted | Varies |
+| **Blast radius** | Container only | Entire system | Project directory |
+| **Session continuity** | Attach/detach, persists | N/A | Native |
+
+## Architecture
 
 ```
-  ┌─────────────────────────────────────────────────────────┐
-  │  CONTAINER (autonomous)                                 │
-  │                                                         │
-  │  Claude works with --dangerously-skip-permissions       │
-  │  Full file access, commands, packages — no prompts      │
-  │  .git is hidden behind a tmpfs                          │
-  └──────────────────────┬──────────────────────────────────┘
-                         │ container exits
-                         ▼
-  ┌─────────────────────────────────────────────────────────┐
-  │  WORKTREE (supervised)                                  │
-  │                                                         │
-  │  Changes are already on disk — no sync needed           │
-  │  Same session resumes with normal permissions            │
-  │  Review, commit, merge, or discard the branch           │
-  └─────────────────────────────────────────────────────────┘
+autobox (bash)               Entry point — arg parsing, worktree, Docker orchestration
+autobox agents (Python/TUI)  Agent manager — spawn, attach, detach, cleanup
+devcontainer/
+  Dockerfile                 debian:bookworm-slim + native Claude binary (~591MB)
+  entrypoint.sh              Firewall init + throwaway git init on tmpfs
+  init-firewall.sh           iptables/ipset rules for allowlisted domains
+  docker-proxy.py            Docker socket proxy — blocks privileged containers, restricts mounts
 ```
 
-## 🔬 How It Works
-
-```
-  HOST                                         CONTAINER
- ──────                                       ─────────
-
-  project/                                     /workspace
-  ├── .git/ (main repo)                        ├── src/
-  │                                            ├── package.json
-  │   git worktree add                         └── ...
-  │        ↓
-  │   /tmp/autobox-*/    ─── bind mount ───>   .git is a tmpfs (hidden)
-  │   (new branch)                             throwaway git init for
-  │                                            git diff baseline
-  │
-  ~/.claude/                                   /home/node/.claude/
-  ├── credentials ──────────────────────────>  ├── credentials
-  ├── settings    ──────────────────────────>  ├── settings
-  └── sessions    <────────────────────────>   └── sessions
-```
-
-1. 🌿 **Worktree** — `git worktree add` creates a checkout on a new branch (instant, no file copying)
-2. 🐳 **Isolate** — Worktree is bind-mounted into a container with `.git` hidden behind a tmpfs
-3. 🚀 **Run** — Claude starts with `--dangerously-skip-permissions` and full autonomy
-4. 📁 **Done** — Changes are already on disk in the worktree — no sync needed
-5. 🔁 **Continue** — You land in the worktree shell; Claude resumes with normal permissions
-
-## ❓ FAQ
+## FAQ
 
 <details>
 <summary><strong>Why not just use Anthropic's devcontainer?</strong></summary>
 
-The official devcontainer mounts your full project directory, including `.git`. This wrapper exists specifically to prevent that.
+The official devcontainer mounts your full project directory including `.git`. autobox exists specifically to prevent that — your git history never enters the container.
 </details>
 
 <details>
 <summary><strong>Does this limit what Claude can do?</strong></summary>
 
-No. Claude has full `--dangerously-skip-permissions` inside the container. It can edit any file, run any command, install packages — it just can't touch your git history or reach outside the container.
+No. Claude has full `--dangerously-skip-permissions` inside the container. It can edit files, run commands, install packages — it just can't touch your git history or escape the container.
+</details>
+
+<details>
+<summary><strong>What about Docker-in-Docker?</strong></summary>
+
+By default, the host Docker socket is mounted so Claude can spin up sibling containers. A proxy (`docker-proxy.py`) sits between Claude's Docker CLI and the real daemon, blocking privileged mode, host PID namespace, `SYS_ADMIN` capabilities, device mounts, and bind mounts outside the workspace. Pass `--no-docker` to disable the socket mount entirely.
 </details>
 
 <details>
 <summary><strong>What about .env files?</strong></summary>
 
-The worktree only contains git-tracked files. Untracked files like `.env` won't be present. Use `--full` to copy dependency directories, or add specific files manually.
-</details>
-
-<details>
-<summary><strong>What if I Ctrl+C during a session?</strong></summary>
-
-Sessions are synced back via a cleanup handler on SIGINT/SIGTERM. If the worktree has changes, it's preserved with instructions for manual cleanup.
+The worktree only contains git-tracked files. Untracked files like `.env` won't be present unless you add them manually. Use `--full` to copy dependency directories.
 </details>
 
 <details>
 <summary><strong>What does the firewall allow?</strong></summary>
 
-Outbound traffic to Anthropic API, GitHub (IPs from their `/meta` endpoint), npm registry, PyPI, and Sentry/Statsig (for Claude's telemetry). Everything else is blocked via `iptables`. IPv6 is rejected entirely.
+Anthropic API, GitHub (IPs from their `/meta` endpoint), npm, PyPI, and Sentry/Statsig (Claude telemetry). Everything else is blocked via `iptables`. IPv6 is rejected entirely.
 </details>
 
 <details>
-<summary><strong>How do I clean up a worktree?</strong></summary>
+<summary><strong>How do I clean up worktrees?</strong></summary>
+
+The TUI handles cleanup automatically. For manual cleanup:
 
 ```bash
-git worktree remove /tmp/autobox-*
+git worktree list                          # see all worktrees
+git worktree remove .claude/worktrees/NAME # remove one
 ```
-
-If the worktree has no changes, autobox cleans it up automatically.
 </details>
 
-## 🙏 Contributing
+## Contributing
 
-PRs welcome. Please test locally before submitting.
+PRs welcome. See [CLAUDE.md](CLAUDE.md) for development notes.
 
-## 📄 License
+## License
 
 [MIT](https://opensource.org/licenses/MIT)
