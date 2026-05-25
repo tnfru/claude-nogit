@@ -125,7 +125,9 @@ def _fill_status(agent: Agent) -> None:
         if not line or len(line) < 2:
             continue
         x, y = line[0], line[1]
-        if x == "?" or y == "?":
+        if x == "U" or y == "U":
+            agent.modified += 1
+        elif x == "?" or y == "?":
             agent.added += 1
         elif x in ("M", "R", "C") or y in ("M", "R", "C"):
             agent.modified += 1
