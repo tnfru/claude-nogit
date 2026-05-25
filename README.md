@@ -9,7 +9,7 @@
 
 `--dangerously-skip-permissions` without the danger. Each agent runs in its own Docker container on a separate git worktree. Your `.git` is hidden behind a tmpfs — Claude gets full autonomy but can't touch your history, force-push, or delete branches. Spawn agents, attach to any of them, detach, come back later.
 
-<video src="https://github.com/tnfru/autobox/raw/master/docs/demo.mp4" width="100%" autoplay loop muted></video>
+https://github.com/user-attachments/assets/565bf780-cf2d-4c16-a1b7-c471733a24de
 
 ## Quick Start
 
