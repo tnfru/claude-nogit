@@ -59,7 +59,7 @@ Each agent gets:
 
 1. **A git worktree** on a new branch — instant checkout, no file copying
 2. **A Docker container** with `.git` hidden behind a tmpfs
-3. **Full autonomy** — `--dangerously-skip-permissions`, unrestricted file/command access
+3. **Full autonomy** — `--dangerously-skip-permissions` with Docker access proxied for safety
 4. **Its own session** — conversations persist across attach/detach
 
 When you're done, changes are already on disk. Review the branch, merge or discard.
@@ -72,14 +72,13 @@ When you're done, changes are already on disk. Review the branch, merge or disca
 |-----|--------|
 | Type + Enter | Start a new agent with that task |
 | ↑/↓ or j/k | Navigate the agent list |
-| Enter | Attach to a running agent |
+| Enter | Attach to a running agent / enter completed worktree |
 | Ctrl-Q | Detach (agent keeps running) |
-| s | Stop an agent |
-| d | Delete an agent (confirms if dirty) |
+| d | Delete an agent (confirms if running or dirty) |
 | t | Toggle dark/light theme |
 | q | Quit |
 
-Agents show their status: `● running`, file changes (`+3 ~1 -2`), or `clean`.
+Agents show their status: `● running`, file changes (`+3 ~1 -2`), or `clean`. Desktop notifications fire when an agent finishes.
 
 ## What's Protected
 
@@ -90,6 +89,7 @@ Agents show their status: `● running`, file changes (`+3 ~1 -2`), or `clean`.
 | Rewrite commits | No commits to rewrite |
 | Delete branches | No branches accessible |
 | Exfiltrate code | Optional firewall restricts to Anthropic, GitHub, npm, PyPI |
+| Escape via Docker | Socket proxy blocks privileged mode, host namespaces, out-of-workspace mounts |
 | Modify files outside project | Container filesystem isolation |
 
 ## Installation
@@ -127,13 +127,15 @@ cp autobox ~/.local/bin/
 | Flag | Description |
 |------|-------------|
 | `--name NAME` | Name the agent/worktree (default: derived from task) |
+| `--worktree PATH` | Re-enter an existing worktree instead of creating one |
 | `--detach` | Start container in background (used by TUI) |
 | `--firewall` | Restrict outbound traffic to Anthropic, GitHub, npm, PyPI |
 | `--no-firewall` | (default) Unrestricted network |
-| `--docker` | (default) Mount Docker socket for sibling containers |
+| `--docker` | (default) Mount Docker socket via security proxy |
 | `--no-docker` | Don't mount Docker socket |
 | `--network NAME` | Connect to a Docker network (e.g. for databases) |
-| `--continue` | Resume Claude session in worktree after container exits |
+| `--continue` | After container exits, resume session on host with normal permissions |
+| `--no-continue` | (default) Drop into worktree shell without resuming |
 | `--full` | Include `node_modules`, `.venv` in the worktree |
 | `--rebuild` | Force Docker image rebuild |
 | `--purge-sessions` | Delete saved session data for the project |
@@ -184,6 +186,7 @@ devcontainer/
   Dockerfile                 debian:bookworm-slim + native Claude binary (~591MB)
   entrypoint.sh              Firewall init + throwaway git init on tmpfs
   init-firewall.sh           iptables/ipset rules for allowlisted domains
+  docker-proxy.py            Docker socket proxy — blocks privileged containers, restricts mounts
 ```
 
 ## FAQ
@@ -198,6 +201,12 @@ The official devcontainer mounts your full project directory including `.git`. a
 <summary><strong>Does this limit what Claude can do?</strong></summary>
 
 No. Claude has full `--dangerously-skip-permissions` inside the container. It can edit files, run commands, install packages — it just can't touch your git history or escape the container.
+</details>
+
+<details>
+<summary><strong>What about Docker-in-Docker?</strong></summary>
+
+By default, the host Docker socket is mounted so Claude can spin up sibling containers. A proxy (`docker-proxy.py`) sits between Claude's Docker CLI and the real daemon, blocking privileged mode, host PID namespace, `SYS_ADMIN` capabilities, device mounts, and bind mounts outside the workspace. Pass `--no-docker` to disable the socket mount entirely.
 </details>
 
 <details>
