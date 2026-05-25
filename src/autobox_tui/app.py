@@ -26,6 +26,7 @@ from autobox_tui.data import (
 )
 
 DETACH_KEYS = "ctrl-q"
+THEME_FILE = os.path.join(os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")), "autobox", "theme")
 
 # NvChad onenord
 THEME_DARK = Theme(
@@ -216,16 +217,25 @@ class AgentsApp(App):
         self.register_theme(THEME_DARK)
         self.register_theme(THEME_LIGHT)
 
-        # Detect system theme from COLORFGBG (format: "fg;bg", bg>=8 = dark)
-        colorfgbg = os.environ.get("COLORFGBG", "")
-        if colorfgbg:
-            try:
-                bg = int(colorfgbg.rsplit(";", 1)[-1])
-                self.theme = "autobox-light" if bg >= 8 else "autobox-dark"
-            except ValueError:
-                self.theme = "autobox-dark"
+        # Restore saved theme, or detect from system
+        saved = None
+        try:
+            saved = open(THEME_FILE).read().strip()
+        except OSError:
+            pass
+
+        if saved in ("autobox-dark", "autobox-light"):
+            self.theme = saved
         else:
-            self.theme = "autobox-dark"
+            colorfgbg = os.environ.get("COLORFGBG", "")
+            if colorfgbg:
+                try:
+                    bg = int(colorfgbg.rsplit(";", 1)[-1])
+                    self.theme = "autobox-light" if bg >= 8 else "autobox-dark"
+                except ValueError:
+                    self.theme = "autobox-dark"
+            else:
+                self.theme = "autobox-dark"
 
         try:
             self.project_dir = get_project_dir()
@@ -251,10 +261,13 @@ class AgentsApp(App):
                 event.prevent_default()
 
     def action_toggle_theme(self) -> None:
-        if self.theme == "autobox-dark":
-            self.theme = "autobox-light"
-        else:
-            self.theme = "autobox-dark"
+        self.theme = "autobox-light" if self.theme == "autobox-dark" else "autobox-dark"
+        try:
+            os.makedirs(os.path.dirname(THEME_FILE), exist_ok=True)
+            with open(THEME_FILE, "w") as f:
+                f.write(self.theme)
+        except OSError:
+            pass
 
     def _poll_status(self) -> None:
         old_states = {a.name: a.running for a in self.agents}
