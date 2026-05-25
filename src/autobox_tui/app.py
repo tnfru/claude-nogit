@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import os
 import shutil
+import signal
 import subprocess
+import sys
 
 from textual import events, on, work
 from textual.app import App, ComposeResult
@@ -402,6 +404,7 @@ class AgentsApp(App):
                 self.attach_container = agent.container_name
                 self.exit()
             elif os.path.isdir(agent.path):
+                cleanup_agent(self.project_dir, agent)
                 self.enter_worktree = agent.path
                 self.exit()
 
@@ -475,7 +478,27 @@ def main() -> None:
             continue
         if app.enter_worktree:
             os.chdir(app.enter_worktree)
-            subprocess.run(["claude"])
+            try:
+                proc = subprocess.Popen(["claude"], process_group=0)
+                fd = sys.stdin.fileno()
+                # Give claude the terminal (ignore SIGTTOU while we do it)
+                old_handler = signal.signal(signal.SIGTTOU, signal.SIG_IGN)
+                os.tcsetpgrp(fd, proc.pid)
+                signal.signal(signal.SIGTTOU, old_handler)
+                try:
+                    _, status = os.waitpid(proc.pid, os.WUNTRACED)
+                finally:
+                    old_handler = signal.signal(signal.SIGTTOU, signal.SIG_IGN)
+                    os.tcsetpgrp(fd, os.getpgrp())
+                    signal.signal(signal.SIGTTOU, old_handler)
+                if os.WIFSTOPPED(status):
+                    os.killpg(proc.pid, signal.SIGTERM)
+                    try:
+                        os.waitpid(proc.pid, 0)
+                    except ChildProcessError:
+                        pass
+            except (KeyboardInterrupt, OSError):
+                pass
             focus_agents = True
             continue
         break
