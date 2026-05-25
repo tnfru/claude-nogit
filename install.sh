@@ -21,6 +21,10 @@ if ! command -v claude &>/dev/null; then
   echo -e "${YELLOW}Warning: Claude CLI not found. Install with: curl -fsSL https://claude.ai/install.sh | bash${NC}"
 fi
 
+if ! command -v uv &>/dev/null; then
+  echo -e "${YELLOW}Warning: uv not found (needed for 'autobox agents'). Install with: curl -LsSf https://astral.sh/uv/install.sh | sh${NC}"
+fi
+
 # Create local bin directory
 mkdir -p ~/.local/bin
 
@@ -37,6 +41,17 @@ for file in Dockerfile entrypoint.sh init-firewall.sh docker-proxy.py; do
   curl -fsSL "$REPO_URL/devcontainer/$file" -o "$DEVCONTAINER_DIR/$file"
 done
 chmod +x "$DEVCONTAINER_DIR/entrypoint.sh" "$DEVCONTAINER_DIR/init-firewall.sh" "$DEVCONTAINER_DIR/docker-proxy.py"
+
+# Download TUI (autobox agents)
+TUI_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/autobox"
+echo -e "${YELLOW}Setting up agent manager...${NC}"
+mkdir -p "$TUI_DIR/src/autobox_tui"
+for file in pyproject.toml uv.lock; do
+  curl -fsSL "$REPO_URL/$file" -o "$TUI_DIR/$file"
+done
+for file in __init__.py app.py data.py; do
+  curl -fsSL "$REPO_URL/src/autobox_tui/$file" -o "$TUI_DIR/src/autobox_tui/$file"
+done
 
 # Check if ~/.local/bin is in PATH
 if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
