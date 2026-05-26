@@ -138,9 +138,10 @@ class AgentItem(ListItem):
         else:
             status_styled = f"[$warning]{status}[/]"
 
+        pad = max(36 - len(a.name), 1)
         yield Static(
             f"  [bold]{a.name}[/bold]"
-            f"{'':>{36 - len(a.name)}}"
+            f"{'':>{pad}}"
             f"{status_styled:>20}"
             f"  [dim]{a.age}[/dim]",
             markup=True,
