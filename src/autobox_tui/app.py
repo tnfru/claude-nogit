@@ -474,10 +474,15 @@ def main() -> None:
         app.focus_agents = focus_agents
         app.run()
         if app.attach_container:
-            subprocess.run(
+            result = subprocess.run(
                 ["docker", "exec", "-it", app.attach_container,
                  "tmux", "attach", "-t", TMUX_SESSION]
             )
+            if result.returncode != 0:
+                subprocess.run(
+                    ["docker", "attach", "--detach-keys=ctrl-q",
+                     app.attach_container]
+                )
             focus_agents = True
             continue
         if app.enter_worktree:
